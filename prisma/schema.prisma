@@ -1,0 +1,570 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/shared/infrastructure/prisma/generated"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ───────────── Enums ─────────────
+
+enum Role {
+  ADMIN
+  COORDINATOR
+  TEACHER
+  STUDENT
+  GUARDIAN
+}
+
+enum UserStatus {
+  PENDING_ONBOARDING
+  ACTIVE
+  SUSPENDED
+}
+
+enum OAuthProvider {
+  GOOGLE
+}
+
+enum Gender {
+  FEMALE
+  MALE
+  OTHER
+  UNDISCLOSED
+}
+
+enum GuardianRelationship {
+  MOTHER
+  FATHER
+  LEGAL_GUARDIAN
+  GRANDPARENT
+  SIBLING
+  OTHER
+}
+
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+enum AvailabilityType {
+  AVAILABLE
+  PREFERRED
+  UNAVAILABLE
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  WITHDRAWN
+  COMPLETED
+}
+
+enum SessionStatus {
+  SCHEDULED
+  LIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  EXCUSED
+}
+
+enum AttendanceSource {
+  MANUAL
+  AUTOMATIC
+}
+
+enum EvaluationType {
+  EXAM
+  QUIZ
+  ASSIGNMENT
+  PROJECT
+  PARTICIPATION
+}
+
+enum OnboardingStatus {
+  PENDING_UPLOAD
+  PROCESSING
+  NEEDS_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum DocumentType {
+  NATIONAL_ID
+  PASSPORT
+  OTHER
+}
+
+// ───────────── Identity & RBAC ─────────────
+
+model Institution {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  name      String
+  slug      String   @unique
+  timezone  String   @default("UTC")
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memberships            Membership[]
+  periods                AcademicPeriod[]
+  pensums                Pensum[]
+  subjects               Subject[]
+  groups                 Group[]
+  onboardingApplications OnboardingApplication[]
+}
+
+model User {
+  id              String     @id @default(uuid(7)) @db.Uuid
+  email           String     @unique
+  emailVerifiedAt DateTime?
+  // Null for accounts that only sign in through an OAuth provider
+  passwordHash    String?
+  firstName       String
+  lastName        String
+  phone           String?
+  avatarUrl       String?
+  status          UserStatus @default(PENDING_ONBOARDING)
+  isPlatformAdmin Boolean    @default(false)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  oauthAccounts          OAuthAccount[]
+  profile                Profile?
+  memberships            Membership[]
+  onboardingApplications OnboardingApplication[]
+}
+
+model OAuthAccount {
+  id                String        @id @default(uuid(7)) @db.Uuid
+  userId            String        @db.Uuid
+  provider          OAuthProvider
+  // Stable subject id issued by the provider (Google `sub`), never the email
+  providerAccountId String
+  providerEmail     String?
+  createdAt         DateTime      @default(now())
+  lastLoginAt       DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@unique([userId, provider])
+}
+
+model Membership {
+  id            String   @id @default(uuid(7)) @db.Uuid
+  userId        String   @db.Uuid
+  institutionId String   @db.Uuid
+  role          Role
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  institution Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+
+  guardians          GuardianLink[]          @relation("StudentGuardians")
+  wards              GuardianLink[]          @relation("GuardianWards")
+  availability       TeacherAvailability[]
+  coursesTaught      Course[]
+  enrollments        Enrollment[]
+  gradesGiven        Grade[]
+  attendanceRecorded AttendanceRecord[]
+  onboardingReviews  OnboardingApplication[]
+  participations     SessionParticipation[]
+  chatMessages       ChatMessage[]
+  transcriptSegments TranscriptSegment[]
+
+  @@unique([userId, institutionId, role])
+  @@index([institutionId, role])
+}
+
+// ───────────── Profile (ficha) & guardians ─────────────
+
+model Profile {
+  id     String @id @default(uuid(7)) @db.Uuid
+  userId String @unique @db.Uuid
+
+  documentType   DocumentType?
+  documentNumber String?
+  birthDate      DateTime?     @db.Date
+  gender         Gender?
+  nationality    String?
+
+  addressLine1 String?
+  addressLine2 String?
+  city         String?
+  state        String?
+  postalCode   String?
+  country      String?
+
+  alternativeEmail String?
+  alternativePhone String?
+
+  bloodType    String?
+  medicalNotes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emergencyContacts EmergencyContact[]
+
+  @@index([documentNumber])
+}
+
+model EmergencyContact {
+  id               String  @id @default(uuid(7)) @db.Uuid
+  profileId        String  @db.Uuid
+  fullName         String
+  relationship     String
+  phone            String
+  alternativePhone String?
+  email            String?
+  priority         Int     @default(1)
+
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId, priority])
+}
+
+model GuardianLink {
+  id           String               @id @default(uuid(7)) @db.Uuid
+  studentId    String               @db.Uuid
+  guardianId   String               @db.Uuid
+  relationship GuardianRelationship
+  isPrimary    Boolean              @default(false)
+  createdAt    DateTime             @default(now())
+
+  student  Membership @relation("StudentGuardians", fields: [studentId], references: [id], onDelete: Cascade)
+  guardian Membership @relation("GuardianWards", fields: [guardianId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, guardianId])
+  @@index([guardianId])
+}
+
+// ───────────── Academic domain ─────────────
+
+model AcademicPeriod {
+  id            String   @id @default(uuid(7)) @db.Uuid
+  institutionId String   @db.Uuid
+  name          String
+  startDate     DateTime @db.Date
+  endDate       DateTime @db.Date
+  isActive      Boolean  @default(false)
+
+  institution  Institution           @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  groups       Group[]
+  availability TeacherAvailability[]
+
+  @@unique([institutionId, name])
+}
+
+model Pensum {
+  id            String   @id @default(uuid(7)) @db.Uuid
+  institutionId String   @db.Uuid
+  code          String
+  name          String
+  version       Int      @default(1)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  institution Institution     @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  subjects    PensumSubject[]
+  groups      Group[]
+
+  @@unique([institutionId, code, version])
+}
+
+model Subject {
+  id            String  @id @default(uuid(7)) @db.Uuid
+  institutionId String  @db.Uuid
+  code          String
+  name          String
+  description   String?
+
+  institution Institution     @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  pensums     PensumSubject[]
+
+  @@unique([institutionId, code])
+}
+
+model PensumSubject {
+  id          String @id @default(uuid(7)) @db.Uuid
+  pensumId    String @db.Uuid
+  subjectId   String @db.Uuid
+  level       Int
+  weeklyHours Int
+  credits     Int?
+
+  pensum  Pensum   @relation(fields: [pensumId], references: [id], onDelete: Cascade)
+  subject Subject  @relation(fields: [subjectId], references: [id])
+  courses Course[]
+
+  @@unique([pensumId, subjectId])
+}
+
+model Group {
+  id            String @id @default(uuid(7)) @db.Uuid
+  institutionId String @db.Uuid
+  pensumId      String @db.Uuid
+  periodId      String @db.Uuid
+  name          String
+  level         Int
+  capacity      Int?
+
+  institution Institution    @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  pensum      Pensum         @relation(fields: [pensumId], references: [id])
+  period      AcademicPeriod @relation(fields: [periodId], references: [id])
+  enrollments Enrollment[]
+  courses     Course[]
+
+  @@unique([periodId, name])
+  @@index([institutionId])
+}
+
+model Enrollment {
+  id         String           @id @default(uuid(7)) @db.Uuid
+  groupId    String           @db.Uuid
+  studentId  String           @db.Uuid
+  status     EnrollmentStatus @default(ACTIVE)
+  enrolledAt DateTime         @default(now())
+
+  group      Group              @relation(fields: [groupId], references: [id])
+  student    Membership         @relation(fields: [studentId], references: [id])
+  grades     Grade[]
+  attendance AttendanceRecord[]
+
+  @@unique([groupId, studentId])
+  @@index([studentId])
+}
+
+model Course {
+  id              String  @id @default(uuid(7)) @db.Uuid
+  groupId         String  @db.Uuid
+  pensumSubjectId String  @db.Uuid
+  teacherId       String? @db.Uuid
+
+  group         Group          @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  pensumSubject PensumSubject  @relation(fields: [pensumSubjectId], references: [id])
+  teacher       Membership?    @relation(fields: [teacherId], references: [id])
+  scheduleSlots ScheduleSlot[]
+  sessions      ClassSession[]
+  evaluations   Evaluation[]
+
+  @@unique([groupId, pensumSubjectId])
+  @@index([teacherId])
+}
+
+// ───────────── Scheduling ─────────────
+
+model TeacherAvailability {
+  id          String           @id @default(uuid(7)) @db.Uuid
+  teacherId   String           @db.Uuid
+  periodId    String           @db.Uuid
+  dayOfWeek   DayOfWeek
+  // Minutes from midnight in the institution timezone
+  startMinute Int
+  endMinute   Int
+  type        AvailabilityType @default(AVAILABLE)
+
+  teacher Membership     @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  period  AcademicPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+
+  @@unique([teacherId, periodId, dayOfWeek, startMinute])
+  @@index([periodId, dayOfWeek])
+}
+
+model ScheduleSlot {
+  id          String    @id @default(uuid(7)) @db.Uuid
+  courseId    String    @db.Uuid
+  dayOfWeek   DayOfWeek
+  startMinute Int
+  endMinute   Int
+  room        String?
+
+  course   Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  sessions ClassSession[]
+
+  @@index([courseId, dayOfWeek])
+}
+
+// ───────────── Classroom & video ─────────────
+
+model ClassSession {
+  id               String        @id @default(uuid(7)) @db.Uuid
+  courseId         String        @db.Uuid
+  scheduleSlotId   String?       @db.Uuid
+  startsAt         DateTime
+  endsAt           DateTime
+  status           SessionStatus @default(SCHEDULED)
+  videoRoomName    String?       @unique
+  actualStartedAt  DateTime?
+  actualEndedAt    DateTime?
+  peakParticipants Int?
+
+  course             Course                 @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  scheduleSlot       ScheduleSlot?          @relation(fields: [scheduleSlotId], references: [id], onDelete: SetNull)
+  attendance         AttendanceRecord[]
+  participations     SessionParticipation[]
+  chatMessages       ChatMessage[]
+  transcriptSegments TranscriptSegment[]
+
+  @@index([courseId, startsAt])
+}
+
+// One row per connection, so a reconnect creates a new row for the same member
+model SessionParticipation {
+  id                 String    @id @default(uuid(7)) @db.Uuid
+  sessionId          String    @db.Uuid
+  membershipId       String    @db.Uuid
+  // LiveKit participant SID; makes webhook redelivery idempotent
+  participantSid     String
+  joinedAt           DateTime
+  leftAt             DateTime?
+  speakingSeconds    Int       @default(0)
+  cameraOnSeconds    Int       @default(0)
+  screenShareSeconds Int       @default(0)
+
+  session    ClassSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  membership Membership   @relation(fields: [membershipId], references: [id])
+
+  @@unique([sessionId, participantSid])
+  @@index([sessionId, membershipId])
+  @@index([membershipId])
+}
+
+model ChatMessage {
+  // Id is generated by the video-server so retried deliveries do not duplicate
+  id        String   @id @db.Uuid
+  sessionId String   @db.Uuid
+  senderId  String   @db.Uuid
+  content   String
+  sentAt    DateTime
+
+  session ClassSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  sender  Membership   @relation(fields: [senderId], references: [id])
+
+  @@index([sessionId, sentAt])
+}
+
+model TranscriptSegment {
+  // Id is generated by the video-server so retried deliveries do not duplicate
+  id        String   @id @db.Uuid
+  sessionId String   @db.Uuid
+  speakerId String?  @db.Uuid
+  text      String
+  language  String?
+  startedAt DateTime
+  endedAt   DateTime
+
+  session ClassSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  speaker Membership?  @relation(fields: [speakerId], references: [id])
+
+  @@index([sessionId, startedAt])
+}
+
+// ───────────── Onboarding / OCR ─────────────
+
+model OnboardingApplication {
+  id            String           @id @default(uuid(7)) @db.Uuid
+  userId        String           @db.Uuid
+  institutionId String           @db.Uuid
+  requestedRole Role
+  status        OnboardingStatus @default(PENDING_UPLOAD)
+
+  documentType DocumentType?
+  idFrontUrl   String?
+  idBackUrl    String?
+  selfieUrl    String?
+
+  extractedFullName       String?
+  extractedDocumentNumber String?
+  extractedBirthDate      DateTime? @db.Date
+  extractedData           Json?
+  ocrConfidence           Float?
+  ocrProvider             String?
+  processedAt             DateTime?
+
+  reviewedById    String?   @db.Uuid
+  reviewedAt      DateTime?
+  rejectionReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  institution Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  reviewedBy  Membership? @relation(fields: [reviewedById], references: [id])
+
+  @@index([institutionId, status])
+  @@index([userId])
+}
+
+// ───────────── Evaluations, grades, attendance ─────────────
+
+model Evaluation {
+  id          String         @id @default(uuid(7)) @db.Uuid
+  courseId    String         @db.Uuid
+  title       String
+  type        EvaluationType
+  weight      Decimal        @db.Decimal(5, 2)
+  maxScore    Decimal        @db.Decimal(6, 2)
+  dueAt       DateTime?
+  isPublished Boolean        @default(false)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  course Course  @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  grades Grade[]
+
+  @@index([courseId])
+}
+
+model Grade {
+  id           String   @id @default(uuid(7)) @db.Uuid
+  evaluationId String   @db.Uuid
+  enrollmentId String   @db.Uuid
+  score        Decimal  @db.Decimal(6, 2)
+  feedback     String?
+  gradedById   String   @db.Uuid
+  gradedAt     DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  evaluation Evaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  enrollment Enrollment @relation(fields: [enrollmentId], references: [id])
+  gradedBy   Membership @relation(fields: [gradedById], references: [id])
+
+  @@unique([evaluationId, enrollmentId])
+  @@index([enrollmentId])
+}
+
+model AttendanceRecord {
+  id           String           @id @default(uuid(7)) @db.Uuid
+  sessionId    String           @db.Uuid
+  enrollmentId String           @db.Uuid
+  status       AttendanceStatus
+  source       AttendanceSource @default(MANUAL)
+  note         String?
+  // Null when the record was produced automatically from video participation
+  recordedById String?          @db.Uuid
+  recordedAt   DateTime         @default(now())
+
+  session    ClassSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  enrollment Enrollment   @relation(fields: [enrollmentId], references: [id])
+  recordedBy Membership?  @relation(fields: [recordedById], references: [id])
+
+  @@unique([sessionId, enrollmentId])
+  @@index([enrollmentId])
+}

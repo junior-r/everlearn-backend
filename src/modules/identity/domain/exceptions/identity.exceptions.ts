@@ -1,0 +1,55 @@
+import { DomainException } from '../../../../shared/domain/domain.exception.js';
+
+export class InvalidCredentialsException extends DomainException {
+  constructor() {
+    super('UNAUTHORIZED', 'INVALID_CREDENTIALS', 'Invalid email or password');
+  }
+}
+
+export class EmailAlreadyRegisteredException extends DomainException {
+  constructor() {
+    super('CONFLICT', 'EMAIL_ALREADY_REGISTERED', 'An account with this email already exists');
+  }
+}
+
+export class AccountSuspendedException extends DomainException {
+  constructor() {
+    super('FORBIDDEN', 'ACCOUNT_SUSPENDED', 'This account has been suspended');
+  }
+}
+
+export class InvalidRefreshTokenException extends DomainException {
+  constructor() {
+    super('UNAUTHORIZED', 'INVALID_REFRESH_TOKEN', 'The session has expired');
+  }
+}
+
+export class UserNotFoundException extends DomainException {
+  constructor() {
+    super('NOT_FOUND', 'USER_NOT_FOUND', 'User not found');
+  }
+}
+
+export class InvalidOAuthStateException extends DomainException {
+  constructor() {
+    super('UNAUTHORIZED', 'INVALID_OAUTH_STATE', 'The sign-in request could not be verified');
+  }
+}
+
+export class GoogleEmailNotVerifiedException extends DomainException {
+  constructor() {
+    super('FORBIDDEN', 'GOOGLE_EMAIL_NOT_VERIFIED', 'The Google account email is not verified');
+  }
+}
+
+export class GoogleAuthenticationFailedException extends DomainException {
+  constructor() {
+    super('UNAUTHORIZED', 'GOOGLE_AUTHENTICATION_FAILED', 'Google sign-in failed');
+  }
+}
+
+export class GoogleOAuthUnavailableException extends DomainException {
+  constructor() {
+    super('UNAVAILABLE', 'GOOGLE_OAUTH_UNAVAILABLE', 'Google sign-in is not configured');
+  }
+}
