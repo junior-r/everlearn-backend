@@ -1,0 +1,21 @@
+import { IsEmail, IsIn, IsNotEmpty, IsString, MaxLength } from 'class-validator';
+import { Role } from '../../../../shared/domain/auth/role.js';
+
+export class RegisterMemberDto {
+  @IsEmail()
+  @MaxLength(254)
+  email: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  firstName: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  lastName: string;
+
+  @IsIn(Object.values(Role))
+  role: Role;
+}

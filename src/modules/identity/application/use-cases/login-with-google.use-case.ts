@@ -1,6 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { normalizeEmail, type User } from '../../domain/entities/user.entity.js';
 import {
+  AccountNotRegisteredException,
   GoogleEmailNotVerifiedException,
   InvalidOAuthStateException,
 } from '../../domain/exceptions/identity.exceptions.js';
@@ -54,18 +55,9 @@ export class LoginWithGoogleUseCase {
       throw new GoogleEmailNotVerifiedException();
     }
     const existing = await this.users.findByEmail(identity.providerEmail);
+    // Accounts are only ever created by an institution; Google can sign in to one, not create one
     if (!existing) {
-      return this.users.create(
-        {
-          email: identity.providerEmail,
-          passwordHash: null,
-          firstName: google.firstName,
-          lastName: google.lastName,
-          avatarUrl: google.avatarUrl,
-          emailVerified: true,
-        },
-        identity,
-      );
+      throw new AccountNotRegisteredException();
     }
     // Whoever registered an unverified email may not own it, so their password must not survive the link
     await this.users.linkOAuthIdentity(existing.id, identity, {

@@ -13,7 +13,11 @@ export class ConfirmOnboardingDataUseCase {
     private readonly now: () => Date = () => new Date(),
   ) {}
 
-  /** Saves the identity the applicant confirmed to their profile and sends the application to review. */
+  /**
+   * Saves the document data the applicant confirmed to their profile and sends
+   * the application to review. The account's name is left as the institution
+   * registered it until an admin approves, so the reviewer can compare the two.
+   */
   async execute(input: ConfirmOnboardingDataInput): Promise<OnboardingApplicationView> {
     const application = await this.applications.findLatestByUserId(input.userId);
     if (!application) {
@@ -27,7 +31,7 @@ export class ConfirmOnboardingDataUseCase {
       documentNumber: input.documentNumber.trim(),
       birthDate: input.birthDate,
     };
-    application.submitForReview(identity.documentType);
+    application.submitForReview(identity);
     await this.applications.submitForReview(application, identity);
     return toApplicationView(application);
   }

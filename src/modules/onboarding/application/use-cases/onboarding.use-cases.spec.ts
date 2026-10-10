@@ -1,9 +1,13 @@
 import {
   createOnboardingFakes,
+  INSTITUTION_ID,
   JPEG_BYTES,
+  OTHER_INSTITUTION_ID,
   PNG_BYTES,
   SAMPLE_EXTRACTION,
+  STUDENT_ENROLLMENT,
 } from '../../../../../test/support/onboarding.fakes.js';
+import { Role } from '../../../../shared/domain/auth/role.js';
 import { MAX_DOCUMENT_IMAGE_BYTES } from '../../domain/document-image.js';
 import {
   DocumentType,
@@ -11,15 +15,25 @@ import {
 } from '../../domain/entities/onboarding-application.entity.js';
 import {
   ApplicationAlreadySubmittedException,
+  ApplicationNotAwaitingReviewException,
+  ApplicationNotFoundException,
   DocumentImageTooLargeException,
   InvalidBirthDateException,
   NothingToConfirmException,
   OcrProcessingFailedException,
+  OnboardingNotAvailableException,
+  RejectionReasonRequiredException,
   UnsupportedDocumentImageException,
 } from '../../domain/exceptions/onboarding.exceptions.js';
 import { MockOcrProvider } from '../../infrastructure/ocr/mock-ocr.provider.js';
 import { ConfirmOnboardingDataUseCase } from './confirm-onboarding-data.use-case.js';
 import { GetOnboardingApplicationUseCase } from './get-onboarding-application.use-case.js';
+import {
+  GetApplicationDocumentUseCase,
+  ListPendingReviewsUseCase,
+  ReviewApplicationUseCase,
+  ReviewDecision,
+} from './review.use-cases.js';
 import { SubmitIdentityDocumentUseCase } from './submit-identity-document.use-case.js';
 
 const USER_ID = 'user-1';
@@ -34,13 +48,18 @@ const confirmation = {
   birthDate: '2008-03-14',
 };
 
+/** A pending Student registered by the institution, as every onboarding applicant is. */
 function setup() {
   const fakes = createOnboardingFakes();
+  fakes.applications.enrollments.set(USER_ID, STUDENT_ENROLLMENT);
   return {
     ...fakes,
     submit: new SubmitIdentityDocumentUseCase(fakes.applications, fakes.storage, fakes.ocr),
     confirm: new ConfirmOnboardingDataUseCase(fakes.applications, () => TODAY),
     get: new GetOnboardingApplicationUseCase(fakes.applications),
+    listPending: new ListPendingReviewsUseCase(fakes.applications),
+    review: new ReviewApplicationUseCase(fakes.applications),
+    getDocument: new GetApplicationDocumentUseCase(fakes.applications, fakes.storage),
   };
 }
 
@@ -70,6 +89,28 @@ describe('SubmitIdentityDocumentUseCase', () => {
       OnboardingStatus.PROCESSING,
       OnboardingStatus.PENDING_CONFIRMATION,
     ]);
+  });
+
+  it('ties the application to the institution and role the member was registered for', async () => {
+    const { submit, applications } = setup();
+
+    await submit.execute(jpegUpload);
+
+    expect(applications.rows[0]).toMatchObject({
+      institutionId: INSTITUTION_ID,
+      requestedRole: Role.STUDENT,
+    });
+  });
+
+  it('refuses someone no institution registered, before storing or reading anything', async () => {
+    const { submit, storage, ocr, applications } = setup();
+
+    await expect(submit.execute({ ...jpegUpload, userId: 'stranger' })).rejects.toBeInstanceOf(
+      OnboardingNotAvailableException,
+    );
+    expect(storage.stored).toHaveLength(0);
+    expect(ocr.calls).toHaveLength(0);
+    expect(applications.rows).toHaveLength(0);
   });
 
   it('never exposes the storage key or OCR provider to the applicant', async () => {
@@ -149,17 +190,6 @@ describe('SubmitIdentityDocumentUseCase', () => {
     },
   );
 
-  it('starts a fresh application after a rejection', async () => {
-    const { submit, applications } = setup();
-    const rejected = applications.seed({ userId: USER_ID, status: OnboardingStatus.REJECTED });
-
-    const view = await submit.execute(jpegUpload);
-
-    expect(view.id).not.toBe(rejected.id);
-    expect(applications.rows).toHaveLength(2);
-    expect(applications.rows[0].status).toBe(OnboardingStatus.REJECTED);
-  });
-
   it("keeps each applicant's application separate", async () => {
     const { submit, get } = setup();
     await submit.execute(jpegUpload);
@@ -175,14 +205,16 @@ describe('ConfirmOnboardingDataUseCase', () => {
 
     const view = await confirm.execute(confirmation);
 
-    expect(view.status).toBe(OnboardingStatus.NEEDS_REVIEW);
-    expect(applications.profiles.get(USER_ID)).toEqual({
+    const confirmed = {
       firstName: 'María',
       lastName: 'González',
       documentType: DocumentType.NATIONAL_ID,
       documentNumber: '87654321',
       birthDate: '2008-03-14',
-    });
+    };
+    expect(view.status).toBe(OnboardingStatus.NEEDS_REVIEW);
+    expect(applications.profiles.get(USER_ID)).toEqual(confirmed);
+    expect(applications.rows[0].confirmed).toEqual(confirmed);
   });
 
   it('keeps what the OCR originally read, even when the applicant corrects it', async () => {
@@ -229,6 +261,162 @@ describe('ConfirmOnboardingDataUseCase', () => {
     );
     expect(applications.rows[0].status).toBe(OnboardingStatus.PENDING_CONFIRMATION);
     expect(applications.profiles.size).toBe(0);
+  });
+});
+
+describe('review pipeline', () => {
+  async function submitted() {
+    const context = setup();
+    await context.submit.execute(jpegUpload);
+    const { id } = await context.confirm.execute(confirmation);
+    return { ...context, applicationId: id };
+  }
+
+  const approve = (applicationId: string, institutionId = INSTITUTION_ID) => ({
+    applicationId,
+    institutionId,
+    reviewerMembershipId: 'admin-membership',
+    decision: ReviewDecision.APPROVE,
+  });
+
+  it('lists submitted applications with the registered account, the OCR reading and the confirmed data', async () => {
+    const { listPending, applicationId } = await submitted();
+
+    const pending = await listPending.execute(INSTITUTION_ID);
+
+    expect(pending).toHaveLength(1);
+    expect(pending[0]).toMatchObject({
+      id: applicationId,
+      status: OnboardingStatus.NEEDS_REVIEW,
+      requestedRole: Role.STUDENT,
+      applicant: { userId: USER_ID, firstName: 'Registered', lastName: 'Name' },
+      extracted: { firstName: 'María Fernanda', documentNumber: '12345678' },
+      confirmed: { firstName: 'María', documentNumber: '87654321' },
+    });
+  });
+
+  it('lists only applications awaiting review, and only for the acting institution', async () => {
+    const { listPending, applications } = await submitted();
+    applications.seed({ userId: 'not-submitted', status: OnboardingStatus.PENDING_CONFIRMATION });
+    applications.seed({
+      userId: 'elsewhere',
+      status: OnboardingStatus.NEEDS_REVIEW,
+      institutionId: OTHER_INSTITUTION_ID,
+    });
+
+    expect(await listPending.execute(INSTITUTION_ID)).toHaveLength(1);
+    expect((await listPending.execute(OTHER_INSTITUTION_ID))[0].applicant.userId).toBe('elsewhere');
+  });
+
+  it('approves: records the reviewer and triggers activation of the member', async () => {
+    const { review, applications, applicationId, listPending } = await submitted();
+    const activated: string[] = [];
+    applications.onApproved = (application) => activated.push(application.userId);
+
+    const view = await review.execute(approve(applicationId));
+
+    expect(view.status).toBe(OnboardingStatus.APPROVED);
+    expect(applications.reviews).toEqual([
+      { applicationId, status: OnboardingStatus.APPROVED, reviewerMembershipId: 'admin-membership' },
+    ]);
+    expect(activated).toEqual([USER_ID]);
+    expect(await listPending.execute(INSTITUTION_ID)).toEqual([]);
+  });
+
+  it('rejects with a reason the applicant can see, without activating anyone', async () => {
+    const { review, applications, applicationId, get } = await submitted();
+    const activated: string[] = [];
+    applications.onApproved = (application) => activated.push(application.userId);
+
+    await review.execute({
+      ...approve(applicationId),
+      decision: ReviewDecision.REJECT,
+      reason: '  La foto está borrosa  ',
+    });
+
+    expect(await get.execute(USER_ID)).toMatchObject({
+      status: OnboardingStatus.REJECTED,
+      rejectionReason: 'La foto está borrosa',
+    });
+    expect(activated).toEqual([]);
+  });
+
+  it.each([undefined, '', '   '])('requires a reason to reject (given %j)', async (reason) => {
+    const { review, applications, applicationId } = await submitted();
+
+    await expect(
+      review.execute({ ...approve(applicationId), decision: ReviewDecision.REJECT, reason }),
+    ).rejects.toBeInstanceOf(RejectionReasonRequiredException);
+    expect(applications.rows[0].status).toBe(OnboardingStatus.NEEDS_REVIEW);
+  });
+
+  it('lets a rejected applicant try again with a new application for the same enrollment', async () => {
+    const { review, submit, applications, applicationId } = await submitted();
+    await review.execute({
+      ...approve(applicationId),
+      decision: ReviewDecision.REJECT,
+      reason: 'Documento ilegible',
+    });
+    // The enrollment must come from the rejected application, not a fresh lookup
+    applications.enrollments.clear();
+
+    const retry = await submit.execute(jpegUpload);
+
+    expect(retry.id).not.toBe(applicationId);
+    expect(retry.rejectionReason).toBeNull();
+    expect(applications.rows).toHaveLength(2);
+    expect(applications.rows[0].status).toBe(OnboardingStatus.REJECTED);
+    expect(applications.rows[1]).toMatchObject({
+      institutionId: INSTITUTION_ID,
+      requestedRole: Role.STUDENT,
+    });
+  });
+
+  it("hides another institution's application from review and from the photo endpoint", async () => {
+    const { review, getDocument, applications, applicationId } = await submitted();
+
+    await expect(review.execute(approve(applicationId, OTHER_INSTITUTION_ID))).rejects.toBeInstanceOf(
+      ApplicationNotFoundException,
+    );
+    await expect(getDocument.execute(applicationId, OTHER_INSTITUTION_ID)).rejects.toBeInstanceOf(
+      ApplicationNotFoundException,
+    );
+    expect(applications.rows[0].status).toBe(OnboardingStatus.NEEDS_REVIEW);
+    expect(applications.reviews).toEqual([]);
+  });
+
+  it('cannot review the same application twice, or one that was never submitted', async () => {
+    const { review, applications, applicationId } = await submitted();
+    await review.execute(approve(applicationId));
+    const draft = applications.seed({ userId: 'draft', status: OnboardingStatus.PENDING_CONFIRMATION });
+
+    await expect(
+      review.execute({ ...approve(applicationId), decision: ReviewDecision.REJECT, reason: 'late' }),
+    ).rejects.toBeInstanceOf(ApplicationNotAwaitingReviewException);
+    await expect(review.execute(approve(draft.id))).rejects.toBeInstanceOf(
+      ApplicationNotAwaitingReviewException,
+    );
+    await expect(review.execute(approve('missing'))).rejects.toBeInstanceOf(
+      ApplicationNotFoundException,
+    );
+  });
+
+  it("returns the stored ID photo to the institution's reviewer", async () => {
+    const { getDocument, applicationId } = await submitted();
+
+    const image = await getDocument.execute(applicationId, INSTITUTION_ID);
+
+    expect(image.format).toBe('jpeg');
+    expect(image.content).toEqual(JPEG_BYTES);
+  });
+
+  it('reports a missing photo as not found', async () => {
+    const { getDocument, applications } = setup();
+    const noPhoto = applications.seed({ userId: 'x', status: OnboardingStatus.NEEDS_REVIEW });
+
+    await expect(getDocument.execute(noPhoto.id, INSTITUTION_ID)).rejects.toBeInstanceOf(
+      ApplicationNotFoundException,
+    );
   });
 });
 

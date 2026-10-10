@@ -28,6 +28,13 @@ export interface AppConfig {
   jwt: JwtConfig;
   google: GoogleOAuthConfig | null;
   rateLimit: RateLimitConfig;
+  /** Credentials of the first Platform Admin, created on start if missing. Null disables this. */
+  platformAdmin: PlatformAdminConfig | null;
+}
+
+export interface PlatformAdminConfig {
+  email: string;
+  password: string;
 }
 
 type Env = Record<string, string | undefined>;
@@ -75,6 +82,22 @@ function googleConfig(env: Env): GoogleOAuthConfig | null {
   };
 }
 
+const MIN_ADMIN_PASSWORD_LENGTH = 12;
+
+function platformAdminConfig(env: Env): PlatformAdminConfig | null {
+  const email = env.PLATFORM_ADMIN_EMAIL;
+  const password = env.PLATFORM_ADMIN_PASSWORD;
+  if (!email || !password) {
+    return null;
+  }
+  if (password.length < MIN_ADMIN_PASSWORD_LENGTH) {
+    throw new Error(
+      `PLATFORM_ADMIN_PASSWORD must be at least ${MIN_ADMIN_PASSWORD_LENGTH} characters`,
+    );
+  }
+  return { email, password };
+}
+
 /**
  * Builds the typed configuration from the environment and fails fast on
  * missing or weak values. Google OAuth is optional and null when unset.
@@ -98,5 +121,6 @@ export function loadAppConfig(env: Env): AppConfig {
       authMaxAttempts: positiveInt(env, 'RATE_LIMIT_AUTH_MAX_ATTEMPTS', 10),
       authWindowSeconds: positiveInt(env, 'RATE_LIMIT_AUTH_WINDOW_SECONDS', 60),
     },
+    platformAdmin: platformAdminConfig(env),
   };
 }

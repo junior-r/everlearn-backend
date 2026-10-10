@@ -4,7 +4,7 @@ import type { AccessTokenVerifier } from '../../domain/auth/access-token-verifie
 import type { AuthenticatedUser } from '../../domain/auth/authenticated-user.js';
 import { Role } from '../../domain/auth/role.js';
 import type { AuthenticatedRequest } from '../authenticated-request.js';
-import { IS_PUBLIC_KEY, ROLES_KEY } from '../decorators/auth.decorators.js';
+import { IS_PUBLIC_KEY, PLATFORM_ADMIN_KEY, ROLES_KEY } from '../decorators/auth.decorators.js';
 import { JwtAuthGuard } from './jwt-auth.guard.js';
 import { RolesGuard } from './roles.guard.js';
 
@@ -105,10 +105,59 @@ describe('RolesGuard', () => {
     );
   });
 
-  it('lets platform admins through without a membership', () => {
-    const admin: AuthenticatedUser = { ...teacher, isPlatformAdmin: true, memberships: [] };
-    const request = { headers: {}, user: admin };
+  it('fixes the institution being acted on for the controller', () => {
+    const request: Partial<AuthenticatedRequest> = {
+      headers: { 'x-institution-id': 'inst-1' },
+      user: teacher,
+    };
 
-    expect(guard.canActivate(contextFor(request, requires(Role.ADMIN)))).toBe(true);
+    guard.canActivate(contextFor(request, requires(Role.TEACHER)));
+
+    expect(request.institutionId).toBe('inst-1');
+  });
+
+  describe('for a Platform Admin', () => {
+    const admin: AuthenticatedUser = { ...teacher, isPlatformAdmin: true, memberships: [] };
+    const anyInstitution = '11111111-1111-4111-8111-111111111111';
+
+    it('allows acting on any institution named in the header, without a membership', () => {
+      const request: Partial<AuthenticatedRequest> = {
+        headers: { 'x-institution-id': anyInstitution },
+        user: admin,
+      };
+
+      expect(guard.canActivate(contextFor(request, requires(Role.ADMIN)))).toBe(true);
+      expect(request.institutionId).toBe(anyInstitution);
+      expect(request.membership).toBeUndefined();
+    });
+
+    it.each([
+      ['no institution header', {}],
+      ['a header that is not an id', { 'x-institution-id': "' OR 1=1 --" }],
+    ])('still requires an institution: rejects %s', (_label, headers) => {
+      expect(() =>
+        guard.canActivate(contextFor({ headers, user: admin }, requires(Role.ADMIN))),
+      ).toThrow(ForbiddenException);
+    });
+  });
+
+  describe('@PlatformAdminOnly', () => {
+    const platformOnly = { [PLATFORM_ADMIN_KEY]: true };
+
+    it('allows a Platform Admin', () => {
+      const admin: AuthenticatedUser = { ...teacher, isPlatformAdmin: true };
+
+      expect(guard.canActivate(contextFor({ headers: {}, user: admin }, platformOnly))).toBe(true);
+    });
+
+    it('rejects everyone else, including an Institution Admin', () => {
+      const institutionAdmin: AuthenticatedUser = {
+        ...teacher,
+        memberships: [{ id: 'm-9', institutionId: 'inst-1', role: Role.ADMIN }],
+      };
+      const request = { headers: { 'x-institution-id': 'inst-1' }, user: institutionAdmin };
+
+      expect(() => guard.canActivate(contextFor(request, platformOnly))).toThrow(ForbiddenException);
+    });
   });
 });

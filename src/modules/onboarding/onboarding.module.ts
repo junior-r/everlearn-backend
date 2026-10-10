@@ -1,13 +1,17 @@
 import { Module } from '@nestjs/common';
+import { useCaseProvider } from '../../shared/infrastructure/nest/use-case.provider.js';
 import { ConfirmOnboardingDataUseCase } from './application/use-cases/confirm-onboarding-data.use-case.js';
 import { GetOnboardingApplicationUseCase } from './application/use-cases/get-onboarding-application.use-case.js';
+import {
+  GetApplicationDocumentUseCase,
+  ListPendingReviewsUseCase,
+  ReviewApplicationUseCase,
+} from './application/use-cases/review.use-cases.js';
 import { SubmitIdentityDocumentUseCase } from './application/use-cases/submit-identity-document.use-case.js';
 import {
   DOCUMENT_STORAGE,
   OCR_PROVIDER,
   ONBOARDING_REPOSITORY,
-  type DocumentStorage,
-  type OcrProvider,
   type OnboardingRepository,
 } from './domain/ports/onboarding.ports.js';
 import { MockOcrProvider } from './infrastructure/ocr/mock-ocr.provider.js';
@@ -22,22 +26,17 @@ import { OnboardingController } from './presentation/controllers/onboarding.cont
     { provide: ONBOARDING_REPOSITORY, useClass: PrismaOnboardingRepository },
     { provide: DOCUMENT_STORAGE, useClass: LocalDiskDocumentStorage },
     { provide: OCR_PROVIDER, useFactory: () => new MockOcrProvider() },
+    useCaseProvider(GetOnboardingApplicationUseCase, [ONBOARDING_REPOSITORY]),
+    useCaseProvider(SubmitIdentityDocumentUseCase, [
+      ONBOARDING_REPOSITORY,
+      DOCUMENT_STORAGE,
+      OCR_PROVIDER,
+    ]),
+    useCaseProvider(ListPendingReviewsUseCase, [ONBOARDING_REPOSITORY]),
+    useCaseProvider(ReviewApplicationUseCase, [ONBOARDING_REPOSITORY]),
+    useCaseProvider(GetApplicationDocumentUseCase, [ONBOARDING_REPOSITORY, DOCUMENT_STORAGE]),
     {
-      provide: GetOnboardingApplicationUseCase,
-      useFactory: (applications: OnboardingRepository) =>
-        new GetOnboardingApplicationUseCase(applications),
-      inject: [ONBOARDING_REPOSITORY],
-    },
-    {
-      provide: SubmitIdentityDocumentUseCase,
-      useFactory: (
-        applications: OnboardingRepository,
-        storage: DocumentStorage,
-        ocr: OcrProvider,
-      ) => new SubmitIdentityDocumentUseCase(applications, storage, ocr),
-      inject: [ONBOARDING_REPOSITORY, DOCUMENT_STORAGE, OCR_PROVIDER],
-    },
-    {
+      // Built by hand because its last constructor argument (the clock) keeps its default
       provide: ConfirmOnboardingDataUseCase,
       useFactory: (applications: OnboardingRepository) =>
         new ConfirmOnboardingDataUseCase(applications),

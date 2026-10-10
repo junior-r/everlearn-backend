@@ -26,10 +26,9 @@ import { LoginWithGoogleUseCase } from '../../application/use-cases/login-with-g
 import { LogoutUseCase } from '../../application/use-cases/logout.use-case.js';
 import { LoginWithPasswordUseCase } from '../../application/use-cases/login-with-password.use-case.js';
 import { RefreshSessionUseCase } from '../../application/use-cases/refresh-session.use-case.js';
-import { RegisterUserUseCase } from '../../application/use-cases/register-user.use-case.js';
 import { StartGoogleLoginUseCase } from '../../application/use-cases/start-google-login.use-case.js';
 import { AuthCookies } from '../auth-cookies.js';
-import { LoginDto, RegisterDto, type AuthResponse } from '../dtos/auth.dtos.js';
+import { LoginDto, type AuthResponse } from '../dtos/auth.dtos.js';
 
 @Controller('auth')
 export class AuthController {
@@ -37,7 +36,6 @@ export class AuthController {
 
   constructor(
     @Inject(APP_CONFIG) private readonly config: AppConfig,
-    @Inject(RegisterUserUseCase) private readonly registerUser: RegisterUserUseCase,
     @Inject(LoginWithPasswordUseCase) private readonly loginWithPassword: LoginWithPasswordUseCase,
     @Inject(RefreshSessionUseCase) private readonly refreshSession: RefreshSessionUseCase,
     @Inject(LogoutUseCase) private readonly logoutSession: LogoutUseCase,
@@ -46,17 +44,6 @@ export class AuthController {
     @Inject(GetCurrentUserUseCase) private readonly getCurrentUser: GetCurrentUserUseCase,
   ) {
     this.cookies = new AuthCookies(config);
-  }
-
-  @Public()
-  @UseGuards(RateLimitGuard)
-  @RateLimit({ scope: 'auth-register' })
-  @Post('register')
-  async register(
-    @Body() dto: RegisterDto,
-    @Res({ passthrough: true }) response: Response,
-  ): Promise<AuthResponse> {
-    return this.respondWith(await this.registerUser.execute(dto), response);
   }
 
   @Public()

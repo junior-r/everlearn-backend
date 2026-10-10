@@ -4,7 +4,10 @@ import type {
   DocumentType,
   OnboardingApplication,
 } from '../../domain/entities/onboarding-application.entity.js';
-import { OcrProcessingFailedException } from '../../domain/exceptions/onboarding.exceptions.js';
+import {
+  OcrProcessingFailedException,
+  OnboardingNotAvailableException,
+} from '../../domain/exceptions/onboarding.exceptions.js';
 import type {
   DocumentStorage,
   OcrProvider,
@@ -47,9 +50,20 @@ export class SubmitIdentityDocumentUseCase {
     return toApplicationView(application);
   }
 
-  // A rejected application is closed; the applicant starts over with a new one
+  /**
+   * Only people an institution registered can onboard. A rejected application
+   * stays closed as history; the retry is a new one for the same enrollment.
+   */
   private async currentOrNew(userId: string): Promise<OnboardingApplication> {
     const latest = await this.applications.findLatestByUserId(userId);
-    return latest && !latest.isRejected() ? latest : this.applications.create(userId);
+    if (latest && !latest.isRejected()) {
+      return latest;
+    }
+    const enrollment =
+      latest?.enrollment() ?? (await this.applications.findPendingEnrollment(userId));
+    if (!enrollment) {
+      throw new OnboardingNotAvailableException();
+    }
+    return this.applications.create(userId, enrollment);
   }
 }

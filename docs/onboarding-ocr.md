@@ -2,7 +2,7 @@
 
 ## The Need
 
-A new account (`PENDING_ONBOARDING`) must prove its identity with a photo of an ID document before an institution activates it.
+A Teacher or Student registered by their institution (`PENDING_ONBOARDING`) must prove their identity with a photo of an ID document before an Institution Admin activates them.
 
 ## The Goal
 
@@ -25,7 +25,6 @@ Read the identity fields from the photo, let the applicant correct them, and sto
 
 ## Known gaps
 
-- No review endpoints yet: nothing moves an application to `APPROVED` or the user to `ACTIVE`.
-- `institutionId` and `requestedRole` are not collected; both are nullable until that step exists.
+- Review, approval and the link to the institution are described in `institution-admin-pipeline.md`.
 - Only the front of the document is captured (`idFrontUrl`); back and selfie are unused.
 - Local disk storage is for development only. Replaced photos are not deleted.

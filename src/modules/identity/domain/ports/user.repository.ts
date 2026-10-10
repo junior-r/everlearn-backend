@@ -1,5 +1,5 @@
 import type { MembershipClaim } from '../../../../shared/domain/auth/authenticated-user.js';
-import type { User } from '../entities/user.entity.js';
+import type { User, UserStatus } from '../entities/user.entity.js';
 
 export const USER_REPOSITORY = Symbol('UserRepository');
 
@@ -13,6 +13,8 @@ export interface NewUser {
   lastName: string;
   avatarUrl: string | null;
   emailVerified: boolean;
+  status: UserStatus;
+  isPlatformAdmin: boolean;
 }
 
 export interface OAuthIdentity {
@@ -30,8 +32,7 @@ export interface UserRepository {
   findById(id: string): Promise<User | null>;
   findByEmail(email: string): Promise<User | null>;
   findByOAuthIdentity(identity: OAuthIdentity): Promise<User | null>;
-  /** Creates a user, optionally with its first OAuth identity, atomically. */
-  create(user: NewUser, identity?: OAuthIdentity): Promise<User>;
+  create(user: NewUser): Promise<User>;
   linkOAuthIdentity(
     userId: string,
     identity: OAuthIdentity,

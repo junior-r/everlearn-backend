@@ -17,18 +17,18 @@ One security layer that all future modules reuse: routes are private by default 
 
 ## The Implementation
 
-- **Endpoints (`/auth`):** `register`, `login`, `refresh`, `logout`, `me`, `google`, `google/callback`.
+- **Endpoints (`/auth`):** `login`, `refresh`, `logout`, `me`, `google`, `google/callback`. There is no public registration; see `institution-admin-pipeline.md`.
 - **Guards:** `JwtAuthGuard` and `RolesGuard` are global. Use `@Public()` to open a route and `@Roles(Role.TEACHER, ...)` to restrict one.
 - **Institution context:** `@Roles` is evaluated against the institution in the `x-institution-id` header. Platform admins bypass role checks.
 - **Use cases** are plain classes with no NestJS imports; `identity.module.ts` wires them to adapters by factory.
 - **Errors:** adapters throw Domain Exceptions; `DomainExceptionFilter` maps them to `{ statusCode, code, message }`.
-- **Google account linking:** matched by Google `sub`, then by verified email. Linking to an account whose email was never verified removes its password, so someone who pre-registered another person's address cannot keep access.
+- **Google account linking:** matched by Google `sub`, then by verified email. Google never creates an account; an email no institution registered is refused. Linking to an account whose email was never verified removes its (temporary) password.
 
 ## Hardening (Redis)
 
 - **Logout revokes the refresh token.** Each refresh token has a unique id (`jti`); logout stores it in a Redis blocklist until the token's own expiry. `refresh` checks the blocklist and fails closed (503) if Redis cannot answer.
 - **One refresh token per session.** `refresh` returns a new access token but keeps the same refresh token, so revoking it ends that session. Sessions last 7 days and do not slide.
-- **Rate limiting** on `login` and `register`: a fixed-window counter in Redis, per client IP, and for `login` also per email so one account cannot be attacked from many IPs. Returns 429 with `Retry-After`. Fails open if Redis is down.
+- **Rate limiting** on `login`: a fixed-window counter in Redis, per client IP and per email, so one account cannot be attacked from many IPs. Returns 429 with `Retry-After`. Fails open if Redis is down.
 - **Settings:** `RATE_LIMIT_AUTH_MAX_ATTEMPTS` (default 10) and `RATE_LIMIT_AUTH_WINDOW_SECONDS` (default 60).
 
 ## Known gaps

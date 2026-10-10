@@ -59,3 +59,25 @@ export class SessionStoreUnavailableException extends DomainException {
     super('UNAVAILABLE', 'SESSION_STORE_UNAVAILABLE', 'Sessions cannot be verified right now');
   }
 }
+
+export class AccountNotRegisteredException extends DomainException {
+  constructor() {
+    super(
+      'FORBIDDEN',
+      'ACCOUNT_NOT_REGISTERED',
+      'No account exists for this email. Your institution must register you first',
+    );
+  }
+}
+
+export class MemberRoleNotAllowedException extends DomainException {
+  constructor() {
+    super('FORBIDDEN', 'MEMBER_ROLE_NOT_ALLOWED', 'You cannot register members with this role');
+  }
+}
+
+export class InstitutionNotFoundException extends DomainException {
+  constructor() {
+    super('NOT_FOUND', 'INSTITUTION_NOT_FOUND', 'Institution not found');
+  }
+}

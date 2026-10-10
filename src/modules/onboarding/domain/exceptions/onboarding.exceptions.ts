@@ -28,6 +28,34 @@ export class NothingToConfirmException extends DomainException {
   }
 }
 
+export class OnboardingNotAvailableException extends DomainException {
+  constructor() {
+    super(
+      'CONFLICT',
+      'ONBOARDING_NOT_AVAILABLE',
+      'This account has no pending registration to verify',
+    );
+  }
+}
+
+export class ApplicationNotFoundException extends DomainException {
+  constructor() {
+    super('NOT_FOUND', 'APPLICATION_NOT_FOUND', 'Application not found');
+  }
+}
+
+export class ApplicationNotAwaitingReviewException extends DomainException {
+  constructor() {
+    super('CONFLICT', 'APPLICATION_NOT_AWAITING_REVIEW', 'The application is not awaiting review');
+  }
+}
+
+export class RejectionReasonRequiredException extends DomainException {
+  constructor() {
+    super('VALIDATION', 'REJECTION_REASON_REQUIRED', 'A reason is required to reject an application');
+  }
+}
+
 export class InvalidBirthDateException extends DomainException {
   constructor() {
     super('VALIDATION', 'INVALID_BIRTH_DATE', 'The date of birth is not valid');

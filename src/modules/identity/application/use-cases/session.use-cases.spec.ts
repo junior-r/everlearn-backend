@@ -2,63 +2,35 @@ import { createIdentityFakes } from '../../../../../test/support/identity.fakes.
 import { Role } from '../../../../shared/domain/auth/role.js';
 import { UserStatus } from '../../domain/entities/user.entity.js';
 import {
+  AccountNotRegisteredException,
   AccountSuspendedException,
-  EmailAlreadyRegisteredException,
+  GoogleEmailNotVerifiedException,
   InvalidCredentialsException,
+  InvalidOAuthStateException,
   InvalidRefreshTokenException,
   UserNotFoundException,
 } from '../../domain/exceptions/identity.exceptions.js';
 import { GetCurrentUserUseCase } from './get-current-user.use-case.js';
-import { LogoutUseCase } from './logout.use-case.js';
+import { LoginWithGoogleUseCase } from './login-with-google.use-case.js';
 import { LoginWithPasswordUseCase } from './login-with-password.use-case.js';
+import { LogoutUseCase } from './logout.use-case.js';
 import { RefreshSessionUseCase } from './refresh-session.use-case.js';
-import { RegisterUserUseCase } from './register-user.use-case.js';
-
-describe('RegisterUserUseCase', () => {
-  it('stores a normalized email and a hashed password, then opens a session', async () => {
-    const { users, hasher, sessions } = createIdentityFakes();
-    const useCase = new RegisterUserUseCase(users, hasher, sessions);
-
-    const session = await useCase.execute({
-      email: '  Grace@Example.COM ',
-      password: 'correct-password',
-      firstName: ' Grace ',
-      lastName: 'Hopper',
-    });
-
-    const stored = await users.findByEmail('grace@example.com');
-    expect(stored?.passwordHash).toBe('hashed:correct-password');
-    expect(stored?.firstName).toBe('Grace');
-    expect(stored?.emailVerifiedAt).toBeNull();
-    expect(session.user.status).toBe(UserStatus.PENDING_ONBOARDING);
-    expect(session.accessToken).toBe(`access:${stored?.id}`);
-    expect(session.refreshToken).toBe(`refresh:${stored?.id}:token-1`);
-  });
-
-  it('rejects an email that is already registered, ignoring case', async () => {
-    const { users, hasher, sessions } = createIdentityFakes();
-    users.seed({ email: 'ada@example.com' });
-    const useCase = new RegisterUserUseCase(users, hasher, sessions);
-
-    await expect(
-      useCase.execute({
-        email: 'ADA@example.com',
-        password: 'another-password',
-        firstName: 'Ada',
-        lastName: 'Clone',
-      }),
-    ).rejects.toBeInstanceOf(EmailAlreadyRegisteredException);
-    expect(users.users.size).toBe(1);
-  });
-});
+import { StartGoogleLoginUseCase } from './start-google-login.use-case.js';
 
 describe('LoginWithPasswordUseCase', () => {
+  function setup() {
+    const fakes = createIdentityFakes();
+    return {
+      ...fakes,
+      useCase: new LoginWithPasswordUseCase(fakes.users, fakes.hasher, fakes.sessions),
+    };
+  }
+
   it('opens a session carrying the active memberships', async () => {
-    const { users, hasher, tokens, sessions } = createIdentityFakes();
+    const { users, tokens, useCase } = setup();
     const user = users.seed();
     const membership = { id: 'm-1', institutionId: 'inst-1', role: Role.TEACHER };
     users.memberships.set(user.id, [membership]);
-    const useCase = new LoginWithPasswordUseCase(users, hasher, sessions);
 
     const session = await useCase.execute({
       email: 'Ada@Example.com',
@@ -74,10 +46,19 @@ describe('LoginWithPasswordUseCase', () => {
     });
   });
 
+  it('lets a pending member sign in, with no memberships, so they can reach onboarding', async () => {
+    const { users, useCase } = setup();
+    users.seed({ status: UserStatus.PENDING_ONBOARDING });
+
+    const session = await useCase.execute({ email: 'ada@example.com', password: 'correct-password' });
+
+    expect(session.user.status).toBe(UserStatus.PENDING_ONBOARDING);
+    expect(session.user.memberships).toEqual([]);
+  });
+
   it('rejects a wrong password', async () => {
-    const { users, hasher, sessions } = createIdentityFakes();
+    const { users, useCase } = setup();
     users.seed();
-    const useCase = new LoginWithPasswordUseCase(users, hasher, sessions);
 
     await expect(
       useCase.execute({ email: 'ada@example.com', password: 'wrong-password' }),
@@ -85,8 +66,7 @@ describe('LoginWithPasswordUseCase', () => {
   });
 
   it('rejects an unknown email with the same error and still runs the hash comparison', async () => {
-    const { users, hasher, sessions } = createIdentityFakes();
-    const useCase = new LoginWithPasswordUseCase(users, hasher, sessions);
+    const { hasher, useCase } = setup();
 
     await expect(
       useCase.execute({ email: 'nobody@example.com', password: 'correct-password' }),
@@ -95,9 +75,8 @@ describe('LoginWithPasswordUseCase', () => {
   });
 
   it('rejects an account that only has Google sign-in', async () => {
-    const { users, hasher, sessions } = createIdentityFakes();
+    const { users, useCase } = setup();
     users.seed({ passwordHash: null });
-    const useCase = new LoginWithPasswordUseCase(users, hasher, sessions);
 
     await expect(
       useCase.execute({ email: 'ada@example.com', password: 'correct-password' }),
@@ -105,9 +84,8 @@ describe('LoginWithPasswordUseCase', () => {
   });
 
   it('rejects a suspended account even with the right password', async () => {
-    const { users, hasher, sessions } = createIdentityFakes();
+    const { users, useCase } = setup();
     users.seed({ status: UserStatus.SUSPENDED });
-    const useCase = new LoginWithPasswordUseCase(users, hasher, sessions);
 
     await expect(
       useCase.execute({ email: 'ada@example.com', password: 'correct-password' }),
@@ -213,5 +191,95 @@ describe('GetCurrentUserUseCase', () => {
     const useCase = new GetCurrentUserUseCase(users, sessions);
 
     await expect(useCase.execute('missing')).rejects.toBeInstanceOf(UserNotFoundException);
+  });
+});
+
+describe('StartGoogleLoginUseCase', () => {
+  it('returns a consent URL bound to a fresh unguessable state', () => {
+    const { google } = createIdentityFakes();
+    const useCase = new StartGoogleLoginUseCase(google);
+
+    const first = useCase.execute();
+    const second = useCase.execute();
+
+    expect(first.url).toContain(`state=${first.state}`);
+    expect(first.state.length).toBeGreaterThanOrEqual(43);
+    expect(first.state).not.toBe(second.state);
+  });
+});
+
+describe('LoginWithGoogleUseCase', () => {
+  const callback = { code: 'auth-code', state: 'state-1', expectedState: 'state-1' };
+
+  function setup() {
+    const fakes = createIdentityFakes();
+    return {
+      ...fakes,
+      useCase: new LoginWithGoogleUseCase(fakes.users, fakes.google, fakes.sessions),
+    };
+  }
+
+  it('never creates an account: someone their institution did not register is turned away', async () => {
+    const { users, useCase } = setup();
+
+    await expect(useCase.execute(callback)).rejects.toBeInstanceOf(AccountNotRegisteredException);
+    expect(users.users.size).toBe(0);
+    expect(users.identities.size).toBe(0);
+  });
+
+  it('signs a registered member in and reuses the link afterwards, even if their Google email changes', async () => {
+    const { users, google, useCase } = setup();
+    const registered = users.seed({ status: UserStatus.PENDING_ONBOARDING });
+
+    const first = await useCase.execute(callback);
+    google.identity = { ...google.identity, email: 'renamed@example.com' };
+    const second = await useCase.execute(callback);
+
+    expect(first.user.id).toBe(registered.id);
+    expect(second.user.id).toBe(registered.id);
+    expect(users.oauthLogins).toHaveLength(2);
+  });
+
+  it('links to an existing verified account and keeps its password', async () => {
+    const { users, useCase } = setup();
+    const existing = users.seed({ emailVerifiedAt: new Date() });
+
+    await useCase.execute(callback);
+
+    expect((await users.findById(existing.id))?.passwordHash).toBe('hashed:correct-password');
+  });
+
+  it('drops the temporary password when linking to an account whose email was never verified', async () => {
+    const { users, useCase } = setup();
+    const registered = users.seed({ emailVerifiedAt: null });
+
+    await useCase.execute(callback);
+
+    const stored = await users.findById(registered.id);
+    expect(stored?.passwordHash).toBeNull();
+    expect(stored?.emailVerifiedAt).toBeInstanceOf(Date);
+  });
+
+  it('refuses an unverified Google email instead of linking an account', async () => {
+    const { users, google, useCase } = setup();
+    users.seed();
+    google.identity = { ...google.identity, emailVerified: false };
+
+    await expect(useCase.execute(callback)).rejects.toBeInstanceOf(
+      GoogleEmailNotVerifiedException,
+    );
+    expect(users.identities.size).toBe(0);
+  });
+
+  it.each([
+    ['a mismatched state', { ...callback, state: 'other-state' }],
+    ['a missing state cookie', { ...callback, expectedState: undefined }],
+    ['a missing state parameter', { ...callback, state: undefined }],
+    ['a missing code', { ...callback, code: undefined }],
+  ])('rejects %s before contacting Google', async (_label, input) => {
+    const { google, useCase } = setup();
+
+    await expect(useCase.execute(input)).rejects.toBeInstanceOf(InvalidOAuthStateException);
+    expect(google.exchangedCodes).toHaveLength(0);
   });
 });

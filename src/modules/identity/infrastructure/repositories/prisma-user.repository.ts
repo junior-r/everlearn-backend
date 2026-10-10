@@ -53,7 +53,7 @@ export class PrismaUserRepository implements UserRepository {
     });
   }
 
-  create(user: NewUser, identity?: OAuthIdentity): Promise<User> {
+  create(user: NewUser): Promise<User> {
     return this.run(
       async () => {
         const row = await this.prisma.user.create({
@@ -64,7 +64,8 @@ export class PrismaUserRepository implements UserRepository {
             lastName: user.lastName,
             avatarUrl: user.avatarUrl,
             emailVerifiedAt: user.emailVerified ? new Date() : null,
-            oauthAccounts: identity ? { create: identity } : undefined,
+            status: user.status,
+            isPlatformAdmin: user.isPlatformAdmin,
           },
         });
         return toDomainUser(row);
