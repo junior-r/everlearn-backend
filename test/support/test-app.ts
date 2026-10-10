@@ -9,6 +9,11 @@ import {
   PENSUM_REPOSITORY,
   SUBJECT_REPOSITORY,
 } from '../../src/modules/academics/domain/ports/academic.repositories.js';
+import {
+  GROUP_REPOSITORY,
+  MEMBER_DIRECTORY,
+  PERIOD_REPOSITORY,
+} from '../../src/modules/academics/domain/ports/group.repositories.js';
 import { UserStatus } from '../../src/modules/identity/domain/entities/user.entity.js';
 import { GOOGLE_OAUTH_GATEWAY } from '../../src/modules/identity/domain/ports/google-oauth.gateway.js';
 import { MEMBER_REPOSITORY } from '../../src/modules/identity/domain/ports/member.repository.js';
@@ -27,6 +32,12 @@ import { PrismaService } from '../../src/shared/infrastructure/prisma/prisma.ser
 import { REDIS_CLIENT } from '../../src/shared/infrastructure/redis/redis.tokens.js';
 import { createAdminFakes } from './admin.fakes.js';
 import {
+  InMemoryGroupRepository,
+  InMemoryMemberDirectory,
+  InMemoryPeriodRepository,
+  type DirectoryEntry,
+} from './group.fakes.js';
+import {
   FakeGoogleGateway,
   FakePasswordHasher,
   InMemoryMemberRepository,
@@ -34,6 +45,7 @@ import {
   InMemoryRefreshTokenRevocations,
   InMemoryUserRepository,
   TEST_PASSWORD,
+  type StoredMember,
 } from './identity.fakes.js';
 import { createOnboardingFakes } from './onboarding.fakes.js';
 
@@ -62,14 +74,37 @@ export async function createTestApp(extraControllers: Type[] = []) {
   onboarding.applications.onApproved = (application) =>
     members.activate(application.userId, application.confirmed ?? undefined);
 
+  const admin = createAdminFakes();
+  const periods = new InMemoryPeriodRepository();
+  const directory = new InMemoryMemberDirectory();
+  const toEntry = (member: StoredMember | null | undefined): DirectoryEntry | null => {
+    const user = member ? users.users.get(member.userId) : undefined;
+    return member && user
+      ? {
+          membershipId: member.membershipId,
+          institutionId: member.institutionId,
+          role: member.role,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+        }
+      : null;
+  };
+  directory.lookup = (institutionId, membershipId) =>
+    toEntry(members.findActive(institutionId, membershipId));
+  directory.resolve = (membershipId) =>
+    toEntry(members.members.find((member) => member.membershipId === membershipId));
+
   const fakes = {
     users,
     members,
+    periods,
+    groups: new InMemoryGroupRepository(admin.pensums, periods, directory),
     google: new FakeGoogleGateway(),
     revocations: new InMemoryRefreshTokenRevocations(),
     rateLimiter: new InMemoryRateLimiter(),
     ...onboarding,
-    ...createAdminFakes(),
+    ...admin,
   };
   const moduleRef = await Test.createTestingModule({
     imports: [AppModule],
@@ -113,11 +148,18 @@ export async function createTestApp(extraControllers: Type[] = []) {
     .useValue(fakes.subjects)
     .overrideProvider(PENSUM_REPOSITORY)
     .useValue(fakes.pensums)
+    .overrideProvider(PERIOD_REPOSITORY)
+    .useValue(fakes.periods)
+    .overrideProvider(GROUP_REPOSITORY)
+    .useValue(fakes.groups)
+    .overrideProvider(MEMBER_DIRECTORY)
+    .useValue(directory)
     .compile();
 
   const app: INestApplication<App> = moduleRef.createNestApplication();
   app.use(cookieParser());
-  await app.init();
+  // Listen once on a free port, so supertest does not start and stop the server around every request
+  await app.listen(0);
   const server = app.getHttpServer();
 
   /** Signs in through the real endpoint and returns the access token. */
@@ -125,6 +167,22 @@ export async function createTestApp(extraControllers: Type[] = []) {
     const response = await request(server).post('/auth/login').send({ email, password });
     if (response.status !== 200) {
       throw new Error(`Login failed for ${email}: ${response.status}`);
+    }
+    return (response.body as { accessToken: string }).accessToken;
+  }
+
+  /**
+   * Signs a newly registered member in and replaces their temporary password,
+   * as they must before the API lets them do anything else.
+   */
+  async function tokenAfterPasswordChange(email: string, temporaryPassword: string) {
+    const restricted = await tokenFor(email, temporaryPassword);
+    const response = await request(server)
+      .post('/auth/change-password')
+      .set('Authorization', 'Bearer ' + restricted)
+      .send({ currentPassword: temporaryPassword, newPassword: TEST_PASSWORD });
+    if (response.status !== 200) {
+      throw new Error('Password change failed for ' + email + ': ' + response.status);
     }
     return (response.body as { accessToken: string }).accessToken;
   }
@@ -142,7 +200,15 @@ export async function createTestApp(extraControllers: Type[] = []) {
     return { user, token: await tokenFor(user.email) };
   }
 
-  return { app, server, tokenFor, signInAs, signInAsPlatformAdmin, ...fakes };
+  return {
+    app,
+    server,
+    tokenFor,
+    tokenAfterPasswordChange,
+    signInAs,
+    signInAsPlatformAdmin,
+    ...fakes,
+  };
 }
 
 export type TestApp = Awaited<ReturnType<typeof createTestApp>>;

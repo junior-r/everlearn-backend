@@ -22,7 +22,7 @@ One security layer that all future modules reuse: routes are private by default 
 - **Institution context:** `@Roles` is evaluated against the institution in the `x-institution-id` header. Platform admins bypass role checks.
 - **Use cases** are plain classes with no NestJS imports; `identity.module.ts` wires them to adapters by factory.
 - **Errors:** adapters throw Domain Exceptions; `DomainExceptionFilter` maps them to `{ statusCode, code, message }`.
-- **Google account linking:** matched by Google `sub`, then by verified email. Google never creates an account; an email no institution registered is refused. Linking to an account whose email was never verified removes its (temporary) password.
+- **Google sign-in** works only for a Google account the user linked from their profile, matched by Google `sub`. It never creates an account or attaches itself by email. See `account-security.md`, which also covers the forced change of temporary passwords.
 
 ## Hardening (Redis)
 
@@ -36,4 +36,4 @@ One security layer that all future modules reuse: routes are private by default 
 - No "sign out everywhere": revocation is per session.
 - Signing in again does not revoke the refresh token the browser already held.
 - Rate limiting uses `request.ip`. Behind a reverse proxy, `trust proxy` must be configured or every client shares one counter.
-- No email verification or password reset flow.
+- No email verification, and no reset for a forgotten password.

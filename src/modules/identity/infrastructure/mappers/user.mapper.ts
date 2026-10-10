@@ -10,6 +10,7 @@ export function toDomainUser(row: UserRow): User {
     id: row.id,
     email: row.email,
     passwordHash: row.passwordHash,
+    mustChangePassword: row.mustChangePassword,
     firstName: row.firstName,
     lastName: row.lastName,
     avatarUrl: row.avatarUrl,

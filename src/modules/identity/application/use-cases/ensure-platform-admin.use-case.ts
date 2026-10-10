@@ -26,6 +26,8 @@ export class EnsurePlatformAdminUseCase {
     await this.users.create({
       email,
       passwordHash: await this.hasher.hash(credentials.password),
+      // Chosen by the operator in configuration, so it is not a temporary password
+      mustChangePassword: false,
       firstName: 'Platform',
       lastName: 'Admin',
       avatarUrl: null,

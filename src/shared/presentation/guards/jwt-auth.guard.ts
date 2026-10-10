@@ -10,12 +10,17 @@ import {
   ACCESS_TOKEN_VERIFIER,
   type AccessTokenVerifier,
 } from '../../domain/auth/access-token-verifier.js';
+import { PasswordChangeRequiredException } from '../../domain/auth/authenticated-user.js';
 import type { AuthenticatedRequest } from '../authenticated-request.js';
-import { IS_PUBLIC_KEY } from '../decorators/auth.decorators.js';
+import { ALLOW_PASSWORD_CHANGE_KEY, IS_PUBLIC_KEY } from '../decorators/auth.decorators.js';
 
 const BEARER_PREFIX = 'Bearer ';
 
-/** Global guard: every route requires a valid access token unless marked `@Public()`. */
+/**
+ * Global guard: every route requires a valid access token unless marked
+ * `@Public()`. A token issued for a temporary password is refused everywhere
+ * except on routes marked `@AllowDuringPasswordChange()`.
+ */
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
   constructor(
@@ -24,11 +29,8 @@ export class JwtAuthGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const isPublic = this.reflector.getAllAndOverride<boolean | undefined>(IS_PUBLIC_KEY, [
-      context.getHandler(),
-      context.getClass(),
-    ]);
-    if (isPublic) {
+    const targets = [context.getHandler(), context.getClass()];
+    if (this.reflector.getAllAndOverride<boolean | undefined>(IS_PUBLIC_KEY, targets)) {
       return true;
     }
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
@@ -37,6 +39,13 @@ export class JwtAuthGuard implements CanActivate {
     const user = token ? await this.verifier.verifyAccessToken(token) : null;
     if (!user) {
       throw new UnauthorizedException();
+    }
+    const allowedWhilePending = this.reflector.getAllAndOverride<boolean | undefined>(
+      ALLOW_PASSWORD_CHANGE_KEY,
+      targets,
+    );
+    if (user.mustChangePassword && !allowedWhilePending) {
+      throw new PasswordChangeRequiredException();
     }
     request.user = user;
     return true;

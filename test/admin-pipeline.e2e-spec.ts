@@ -1,5 +1,6 @@
 import request from 'supertest';
 import { Role } from '../src/shared/domain/auth/role.js';
+import { TEST_PASSWORD } from './support/identity.fakes.js';
 import { JPEG_BYTES } from './support/onboarding.fakes.js';
 import { createTestApp, type TestApp } from './support/test-app.js';
 
@@ -206,7 +207,10 @@ describe('Institution hierarchy and admin pipeline (HTTP)', () => {
         .expect(201);
       expect(appointed.body.member).toMatchObject({ status: 'ACTIVE', isActive: true });
 
-      const directorToken = await ctx.tokenFor('director@example.com', appointed.body.temporaryPassword);
+      const directorToken = await ctx.tokenAfterPasswordChange(
+        'director@example.com',
+        appointed.body.temporaryPassword,
+      );
 
       await as(directorToken, institutionId)
         .post('/members')
@@ -229,13 +233,13 @@ describe('Institution hierarchy and admin pipeline (HTTP)', () => {
       await as(admin, otherInstitutionId).get('/members').expect(403);
     });
 
-    it('rejects a duplicate email and invalid input', async () => {
+    it('rejects the same role twice and invalid input', async () => {
       const api = as((await ctx.signInAs(Role.ADMIN, institutionId)).token, institutionId);
       await api.post('/members').send(newMember(Role.STUDENT, 'grace@example.com')).expect(201);
 
-      const duplicate = await api.post('/members').send(newMember(Role.TEACHER, 'GRACE@example.com'));
+      const duplicate = await api.post('/members').send(newMember(Role.STUDENT, 'GRACE@example.com'));
       expect(duplicate.status).toBe(409);
-      expect(duplicate.body.code).toBe('EMAIL_ALREADY_REGISTERED');
+      expect(duplicate.body.code).toBe('MEMBER_ALREADY_REGISTERED');
       await api.post('/members').send({ ...newMember(Role.STUDENT, 'a@example.com'), role: 'OWNER' }).expect(400);
       await api.post('/members').send({ ...newMember(Role.STUDENT, 'a@example.com'), isPlatformAdmin: true }).expect(400);
     });
@@ -248,7 +252,7 @@ describe('Institution hierarchy and admin pipeline (HTTP)', () => {
         .post('/members')
         .send(newMember(Role.STUDENT, email))
         .expect(201);
-      const studentToken = await ctx.tokenFor(email, registered.body.temporaryPassword);
+      const studentToken = await ctx.tokenAfterPasswordChange(email, registered.body.temporaryPassword);
       await as(studentToken)
         .post('/onboarding/document')
         .field('documentType', 'NATIONAL_ID')
@@ -257,7 +261,6 @@ describe('Institution hierarchy and admin pipeline (HTTP)', () => {
       const confirmed = await as(studentToken).post('/onboarding/confirm').send(confirmation).expect(200);
       return {
         email,
-        temporaryPassword: registered.body.temporaryPassword as string,
         studentToken,
         applicationId: confirmed.body.application.id as string,
       };
@@ -298,7 +301,7 @@ describe('Institution hierarchy and admin pipeline (HTTP)', () => {
       // The next sign-in is an active Student with the name from their ID
       const login = await request(ctx.server)
         .post('/auth/login')
-        .send({ email: student.email, password: student.temporaryPassword })
+        .send({ email: student.email, password: TEST_PASSWORD })
         .expect(200);
       expect(login.body.user).toMatchObject({
         status: 'ACTIVE',
@@ -370,12 +373,18 @@ describe('Institution hierarchy and admin pipeline (HTTP)', () => {
       await as(admin, institutionId).post('/onboarding/application/not-a-uuid/review').send({ decision: 'APPROVE' }).expect(400);
     });
 
-    it('checks uploads by their bytes and size, not by the name or type the client sends', async () => {
+    // The 5 MB limit is covered by the use-case tests and, over real HTTP, by the Playwright suite.
+    // Doing it here crashed the test process: with client and server in one process on Windows,
+    // cutting a large upload off mid-stream aborts Node (exit 0xC0000409) about one run in ten.
+    it('checks uploads by their bytes, not by the name or type the client sends', async () => {
       const admin = (await ctx.signInAs(Role.ADMIN, institutionId)).token;
       const registered = await as(admin, institutionId)
         .post('/members')
         .send(newMember(Role.STUDENT, 'grace@example.com'));
-      const student = await ctx.tokenFor('grace@example.com', registered.body.temporaryPassword);
+      const student = await ctx.tokenAfterPasswordChange(
+        'grace@example.com',
+        registered.body.temporaryPassword,
+      );
       const upload = (content: Uint8Array, name: string, contentType: string) =>
         as(student)
           .post('/onboarding/document')
@@ -386,9 +395,6 @@ describe('Institution hierarchy and admin pipeline (HTTP)', () => {
       expect(disguised.status).toBe(400);
       expect(disguised.body.code).toBe('UNSUPPORTED_DOCUMENT_IMAGE');
 
-      const oversized = new Uint8Array(5 * 1024 * 1024 + 1);
-      oversized.set(JPEG_BYTES);
-      await upload(oversized, 'id.jpg', 'image/jpeg').expect(413);
       expect(ctx.storage.stored).toHaveLength(0);
 
       // A real JPEG is accepted even when mislabelled

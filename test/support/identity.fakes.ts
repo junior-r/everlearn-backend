@@ -7,7 +7,9 @@ import {
 } from '../../src/modules/identity/domain/entities/user.entity.js';
 import {
   EmailAlreadyRegisteredException,
+  GoogleAccountAlreadyLinkedException,
   InstitutionNotFoundException,
+  MemberAlreadyRegisteredException,
 } from '../../src/modules/identity/domain/exceptions/identity.exceptions.js';
 import type { Member } from '../../src/modules/identity/domain/member.js';
 import type {
@@ -17,23 +19,26 @@ import type {
 import type {
   MemberRepository,
   NewMember,
+  NewMembership,
 } from '../../src/modules/identity/domain/ports/member.repository.js';
 import type { PasswordHasher } from '../../src/modules/identity/domain/ports/password-hasher.js';
 import type { RefreshTokenRevocations } from '../../src/modules/identity/domain/ports/refresh-token-revocations.js';
 import type {
+  GoogleLinkTicket,
   RefreshTokenClaims,
   TokenIssuer,
 } from '../../src/modules/identity/domain/ports/token-issuer.js';
 import type {
-  LinkOAuthOptions,
   NewUser,
   OAuthIdentity,
+  OAuthProvider,
   UserRepository,
 } from '../../src/modules/identity/domain/ports/user.repository.js';
 import type {
   AuthenticatedUser,
   MembershipClaim,
 } from '../../src/shared/domain/auth/authenticated-user.js';
+import type { Role } from '../../src/shared/domain/auth/role.js';
 import type {
   RateLimitDecision,
   RateLimiter,
@@ -46,6 +51,7 @@ const identityKey = (identity: OAuthIdentity) =>
 
 export class InMemoryUserRepository implements UserRepository {
   readonly users = new Map<string, User>();
+  /** Provider identity → user id. */
   readonly identities = new Map<string, string>();
   /** Active memberships only, which is all the identity module ever reads. */
   readonly memberships = new Map<string, MembershipClaim[]>();
@@ -56,6 +62,7 @@ export class InMemoryUserRepository implements UserRepository {
       id: randomUUID(),
       email: 'ada@example.com',
       passwordHash: `hashed:${TEST_PASSWORD}`,
+      mustChangePassword: false,
       firstName: 'Ada',
       lastName: 'Lovelace',
       avatarUrl: null,
@@ -76,6 +83,7 @@ export class InMemoryUserRepository implements UserRepository {
         id: user.id,
         email: user.email,
         passwordHash: user.passwordHash,
+        mustChangePassword: user.mustChangePassword,
         firstName: user.firstName,
         lastName: user.lastName,
         avatarUrl: user.avatarUrl,
@@ -108,6 +116,7 @@ export class InMemoryUserRepository implements UserRepository {
     return this.seed({
       email: user.email,
       passwordHash: user.passwordHash,
+      mustChangePassword: user.mustChangePassword,
       firstName: user.firstName,
       lastName: user.lastName,
       avatarUrl: user.avatarUrl,
@@ -117,16 +126,26 @@ export class InMemoryUserRepository implements UserRepository {
     });
   }
 
-  linkOAuthIdentity(
-    userId: string,
-    identity: OAuthIdentity,
-    options: LinkOAuthOptions,
-  ): Promise<void> {
-    this.identities.set(identityKey(identity), userId);
-    if (options.resetUnverifiedCredentials) {
-      this.patch(userId, { passwordHash: null, emailVerifiedAt: new Date() });
-    }
+  setPassword(userId: string, passwordHash: string): Promise<void> {
+    this.patch(userId, { passwordHash, mustChangePassword: false });
     return Promise.resolve();
+  }
+
+  hasOAuthIdentity(userId: string, provider: OAuthProvider): Promise<boolean> {
+    return Promise.resolve(
+      [...this.identities].some(([key, owner]) => owner === userId && key.startsWith(`${provider}:`)),
+    );
+  }
+
+  async linkOAuthIdentity(userId: string, identity: OAuthIdentity): Promise<void> {
+    // Mirrors the two unique constraints on OAuthAccount
+    if (
+      this.identities.has(identityKey(identity)) ||
+      (await this.hasOAuthIdentity(userId, identity.provider))
+    ) {
+      throw new GoogleAccountAlreadyLinkedException();
+    }
+    this.identities.set(identityKey(identity), userId);
   }
 
   recordOAuthLogin(identity: OAuthIdentity): Promise<void> {
@@ -139,7 +158,7 @@ export class InMemoryUserRepository implements UserRepository {
   }
 }
 
-type StoredMember = Member & { institutionId: string };
+export type StoredMember = Member & { institutionId: string };
 
 /** Shares its users with InMemoryUserRepository, so a registered member can then sign in. */
 export class InMemoryMemberRepository implements MemberRepository {
@@ -150,32 +169,35 @@ export class InMemoryMemberRepository implements MemberRepository {
   constructor(private readonly users: InMemoryUserRepository) {}
 
   register(member: NewMember): Promise<Member> {
-    if (this.knownInstitutionIds && !this.knownInstitutionIds.has(member.institutionId)) {
-      return Promise.reject(new InstitutionNotFoundException());
-    }
+    this.assertInstitutionExists(member.institutionId);
     const user = this.users.seed({
       email: member.email,
       passwordHash: member.passwordHash,
+      mustChangePassword: true,
       firstName: member.firstName,
       lastName: member.lastName,
       status: member.activate ? UserStatus.ACTIVE : UserStatus.PENDING_ONBOARDING,
     });
-    const stored: StoredMember = {
-      userId: user.id,
-      membershipId: randomUUID(),
-      email: user.email,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      role: member.role,
-      status: user.status,
-      isActive: member.activate,
-      institutionId: member.institutionId,
-    };
-    this.members.push(stored);
-    if (stored.isActive) {
-      this.publish(stored);
+    return Promise.resolve(this.store(user.id, member.institutionId, member.role, member.activate));
+  }
+
+  addMembership(membership: NewMembership): Promise<Member> {
+    this.assertInstitutionExists(membership.institutionId);
+    const duplicate = this.members.some(
+      (member) =>
+        member.userId === membership.userId &&
+        member.institutionId === membership.institutionId &&
+        member.role === membership.role,
+    );
+    if (duplicate) {
+      return Promise.reject(new MemberAlreadyRegisteredException());
     }
-    return Promise.resolve(this.toMember(stored));
+    if (membership.activateAccount) {
+      this.users.patch(membership.userId, { status: UserStatus.ACTIVE });
+    }
+    return Promise.resolve(
+      this.store(membership.userId, membership.institutionId, membership.role, membership.activate),
+    );
   }
 
   listByInstitution(institutionId: string): Promise<Member[]> {
@@ -191,17 +213,46 @@ export class InMemoryMemberRepository implements MemberRepository {
     return member ? { institutionId: member.institutionId, requestedRole: member.role } : null;
   }
 
-  /** What approving an onboarding application does to the account. */
+  /** What approving an onboarding application does: the account and all its pending memberships go active. */
   activate(userId: string, names?: { firstName: string; lastName: string }): void {
-    const member = this.members.find((candidate) => candidate.userId === userId);
-    if (!member) {
-      return;
-    }
-    member.isActive = true;
-    member.status = UserStatus.ACTIVE;
-    Object.assign(member, names);
     this.users.patch(userId, { status: UserStatus.ACTIVE, ...names });
-    this.publish(member);
+    for (const member of this.members.filter((candidate) => candidate.userId === userId)) {
+      if (!member.isActive) {
+        member.isActive = true;
+        this.publish(member);
+      }
+    }
+  }
+
+  findActive(institutionId: string, membershipId: string): StoredMember | null {
+    const member = this.members.find(
+      (candidate) =>
+        candidate.membershipId === membershipId &&
+        candidate.institutionId === institutionId &&
+        candidate.isActive,
+    );
+    return member && this.users.users.get(member.userId)?.isActive() ? member : null;
+  }
+
+  private assertInstitutionExists(institutionId: string): void {
+    if (this.knownInstitutionIds && !this.knownInstitutionIds.has(institutionId)) {
+      throw new InstitutionNotFoundException();
+    }
+  }
+
+  private store(userId: string, institutionId: string, role: Role, isActive: boolean): Member {
+    const stored = {
+      userId,
+      membershipId: randomUUID(),
+      role,
+      isActive,
+      institutionId,
+    } as StoredMember;
+    this.members.push(stored);
+    if (isActive) {
+      this.publish(stored);
+    }
+    return this.toMember(stored);
   }
 
   private publish(member: StoredMember): void {
@@ -210,15 +261,17 @@ export class InMemoryMemberRepository implements MemberRepository {
     this.users.memberships.set(member.userId, claims);
   }
 
+  // Name, email and status always come from the account, as they do in the database join
   private toMember(stored: StoredMember): Member {
+    const user = this.users.users.get(stored.userId);
     return {
       userId: stored.userId,
       membershipId: stored.membershipId,
-      email: stored.email,
-      firstName: stored.firstName,
-      lastName: stored.lastName,
+      email: user?.email ?? '',
+      firstName: user?.firstName ?? '',
+      lastName: user?.lastName ?? '',
       role: stored.role,
-      status: stored.status,
+      status: user?.status ?? UserStatus.PENDING_ONBOARDING,
       isActive: stored.isActive,
     };
   }
@@ -258,6 +311,16 @@ export class FakeTokenIssuer implements TokenIssuer {
       return Promise.resolve(null);
     }
     return Promise.resolve({ userId, tokenId, expiresAt: new Date(Date.now() + 60_000) });
+  }
+
+  // Ticket format: link:<userId>:<state>
+  issueGoogleLinkTicket(ticket: GoogleLinkTicket): Promise<string> {
+    return Promise.resolve(`link:${ticket.userId}:${ticket.state}`);
+  }
+
+  verifyGoogleLinkTicket(token: string): Promise<GoogleLinkTicket | null> {
+    const [kind, userId, state] = token.split(':');
+    return Promise.resolve(kind === 'link' && userId && state ? { userId, state } : null);
   }
 }
 

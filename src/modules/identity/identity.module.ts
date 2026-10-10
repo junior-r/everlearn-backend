@@ -6,6 +6,11 @@ import { useCaseProvider } from '../../shared/infrastructure/nest/use-case.provi
 import { JwtAuthGuard } from '../../shared/presentation/guards/jwt-auth.guard.js';
 import { RolesGuard } from '../../shared/presentation/guards/roles.guard.js';
 import { SessionIssuer } from './application/services/session-issuer.js';
+import {
+  ChangePasswordUseCase,
+  CompleteGoogleLinkUseCase,
+  StartGoogleLinkUseCase,
+} from './application/use-cases/account-security.use-cases.js';
 import { EnsurePlatformAdminUseCase } from './application/use-cases/ensure-platform-admin.use-case.js';
 import { GetCurrentUserUseCase } from './application/use-cases/get-current-user.use-case.js';
 import { LoginWithGoogleUseCase } from './application/use-cases/login-with-google.use-case.js';
@@ -67,6 +72,13 @@ import { MembersController } from './presentation/controllers/members.controller
     useCaseProvider(GetCurrentUserUseCase, [USER_REPOSITORY, SessionIssuer]),
     useCaseProvider(EnsurePlatformAdminUseCase, [USER_REPOSITORY, PASSWORD_HASHER]),
     useCaseProvider(ListMembersUseCase, [MEMBER_REPOSITORY]),
+    useCaseProvider(ChangePasswordUseCase, [USER_REPOSITORY, PASSWORD_HASHER, SessionIssuer]),
+    useCaseProvider(StartGoogleLinkUseCase, [USER_REPOSITORY, GOOGLE_OAUTH_GATEWAY, TOKEN_ISSUER]),
+    useCaseProvider(CompleteGoogleLinkUseCase, [
+      USER_REPOSITORY,
+      GOOGLE_OAUTH_GATEWAY,
+      TOKEN_ISSUER,
+    ]),
     {
       // Built by hand because its last constructor argument (the password generator) keeps its default
       provide: RegisterMemberUseCase,

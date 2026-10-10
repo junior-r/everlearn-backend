@@ -1,22 +1,29 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { MembershipClaim } from '../../../../shared/domain/auth/authenticated-user.js';
 import {
-  DomainException,
-  PersistenceException,
-} from '../../../../shared/domain/domain.exception.js';
-import { Prisma } from '../../../../shared/infrastructure/prisma/generated/client.js';
+  PrismaErrorCode,
+  runQuery,
+} from '../../../../shared/infrastructure/prisma/prisma-errors.js';
 import { PrismaService } from '../../../../shared/infrastructure/prisma/prisma.service.js';
 import type { User } from '../../domain/entities/user.entity.js';
-import { EmailAlreadyRegisteredException } from '../../domain/exceptions/identity.exceptions.js';
+import {
+  EmailAlreadyRegisteredException,
+  GoogleAccountAlreadyLinkedException,
+} from '../../domain/exceptions/identity.exceptions.js';
 import type {
-  LinkOAuthOptions,
   NewUser,
   OAuthIdentity,
+  OAuthProvider,
   UserRepository,
 } from '../../domain/ports/user.repository.js';
 import { toDomainUser, toMembershipClaim } from '../mappers/user.mapper.js';
 
-const UNIQUE_VIOLATION = 'P2002';
+const identityKey = (identity: OAuthIdentity) => ({
+  provider_providerAccountId: {
+    provider: identity.provider,
+    providerAccountId: identity.providerAccountId,
+  },
+});
 
 @Injectable()
 export class PrismaUserRepository implements UserRepository {
@@ -25,28 +32,23 @@ export class PrismaUserRepository implements UserRepository {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   findById(id: string): Promise<User | null> {
-    return this.run(async () => {
+    return runQuery(this.logger, async () => {
       const row = await this.prisma.user.findUnique({ where: { id } });
       return row ? toDomainUser(row) : null;
     });
   }
 
   findByEmail(email: string): Promise<User | null> {
-    return this.run(async () => {
+    return runQuery(this.logger, async () => {
       const row = await this.prisma.user.findUnique({ where: { email } });
       return row ? toDomainUser(row) : null;
     });
   }
 
   findByOAuthIdentity(identity: OAuthIdentity): Promise<User | null> {
-    return this.run(async () => {
+    return runQuery(this.logger, async () => {
       const row = await this.prisma.oAuthAccount.findUnique({
-        where: {
-          provider_providerAccountId: {
-            provider: identity.provider,
-            providerAccountId: identity.providerAccountId,
-          },
-        },
+        where: identityKey(identity),
         include: { user: true },
       });
       return row ? toDomainUser(row.user) : null;
@@ -54,12 +56,14 @@ export class PrismaUserRepository implements UserRepository {
   }
 
   create(user: NewUser): Promise<User> {
-    return this.run(
+    return runQuery(
+      this.logger,
       async () => {
         const row = await this.prisma.user.create({
           data: {
             email: user.email,
             passwordHash: user.passwordHash,
+            mustChangePassword: user.mustChangePassword,
             firstName: user.firstName,
             lastName: user.lastName,
             avatarUrl: user.avatarUrl,
@@ -70,44 +74,48 @@ export class PrismaUserRepository implements UserRepository {
         });
         return toDomainUser(row);
       },
-      () => new EmailAlreadyRegisteredException(),
+      { [PrismaErrorCode.UNIQUE_VIOLATION]: () => new EmailAlreadyRegisteredException() },
     );
   }
 
-  linkOAuthIdentity(
-    userId: string,
-    identity: OAuthIdentity,
-    options: LinkOAuthOptions,
-  ): Promise<void> {
-    return this.run(async () => {
+  setPassword(userId: string, passwordHash: string): Promise<void> {
+    return runQuery(this.logger, async () => {
       await this.prisma.user.update({
         where: { id: userId },
-        data: {
-          oauthAccounts: { create: identity },
-          ...(options.resetUnverifiedCredentials
-            ? { passwordHash: null, emailVerifiedAt: new Date() }
-            : {}),
-        },
+        data: { passwordHash, mustChangePassword: false },
       });
     });
   }
 
+  hasOAuthIdentity(userId: string, provider: OAuthProvider): Promise<boolean> {
+    return runQuery(
+      this.logger,
+      async () => (await this.prisma.oAuthAccount.count({ where: { userId, provider } })) > 0,
+    );
+  }
+
+  linkOAuthIdentity(userId: string, identity: OAuthIdentity): Promise<void> {
+    return runQuery(
+      this.logger,
+      async () => {
+        await this.prisma.oAuthAccount.create({ data: { userId, ...identity } });
+      },
+      // Either this Google account or this user already has a link (both are unique)
+      { [PrismaErrorCode.UNIQUE_VIOLATION]: () => new GoogleAccountAlreadyLinkedException() },
+    );
+  }
+
   recordOAuthLogin(identity: OAuthIdentity): Promise<void> {
-    return this.run(async () => {
+    return runQuery(this.logger, async () => {
       await this.prisma.oAuthAccount.update({
-        where: {
-          provider_providerAccountId: {
-            provider: identity.provider,
-            providerAccountId: identity.providerAccountId,
-          },
-        },
+        where: identityKey(identity),
         data: { lastLoginAt: new Date() },
       });
     });
   }
 
   findActiveMemberships(userId: string): Promise<MembershipClaim[]> {
-    return this.run(async () => {
+    return runQuery(this.logger, async () => {
       const rows = await this.prisma.membership.findMany({
         where: { userId, isActive: true, institution: { isActive: true } },
         select: { id: true, institutionId: true, role: true },
@@ -115,28 +123,5 @@ export class PrismaUserRepository implements UserRepository {
       });
       return rows.map(toMembershipClaim);
     });
-  }
-
-  /**
-   * Runs a query and converts any database failure into a Domain Exception,
-   * so driver errors never reach the client.
-   */
-  private async run<T>(
-    operation: () => Promise<T>,
-    onUniqueViolation?: () => DomainException,
-  ): Promise<T> {
-    try {
-      return await operation();
-    } catch (error) {
-      if (
-        onUniqueViolation &&
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === UNIQUE_VIOLATION
-      ) {
-        throw onUniqueViolation();
-      }
-      this.logger.error(error instanceof Error ? error.stack : String(error));
-      throw new PersistenceException();
-    }
   }
 }

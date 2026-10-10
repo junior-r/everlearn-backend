@@ -60,16 +60,6 @@ export class SessionStoreUnavailableException extends DomainException {
   }
 }
 
-export class AccountNotRegisteredException extends DomainException {
-  constructor() {
-    super(
-      'FORBIDDEN',
-      'ACCOUNT_NOT_REGISTERED',
-      'No account exists for this email. Your institution must register you first',
-    );
-  }
-}
-
 export class MemberRoleNotAllowedException extends DomainException {
   constructor() {
     super('FORBIDDEN', 'MEMBER_ROLE_NOT_ALLOWED', 'You cannot register members with this role');
@@ -79,5 +69,45 @@ export class MemberRoleNotAllowedException extends DomainException {
 export class InstitutionNotFoundException extends DomainException {
   constructor() {
     super('NOT_FOUND', 'INSTITUTION_NOT_FOUND', 'Institution not found');
+  }
+}
+
+export class GoogleAccountNotLinkedException extends DomainException {
+  constructor() {
+    super(
+      'FORBIDDEN',
+      'GOOGLE_ACCOUNT_NOT_LINKED',
+      'This Google account is not linked. Sign in with your password and link it from your profile',
+    );
+  }
+}
+
+export class GoogleAccountAlreadyLinkedException extends DomainException {
+  constructor() {
+    super('CONFLICT', 'GOOGLE_ACCOUNT_ALREADY_LINKED', 'This Google account or user is already linked');
+  }
+}
+
+export class AccountNotActiveException extends DomainException {
+  constructor() {
+    super('FORBIDDEN', 'ACCOUNT_NOT_ACTIVE', 'Your account must be active to do this');
+  }
+}
+
+export class InvalidCurrentPasswordException extends DomainException {
+  constructor() {
+    super('FORBIDDEN', 'INVALID_CURRENT_PASSWORD', 'The current password is incorrect');
+  }
+}
+
+export class PasswordUnchangedException extends DomainException {
+  constructor() {
+    super('VALIDATION', 'PASSWORD_UNCHANGED', 'The new password must be different');
+  }
+}
+
+export class MemberAlreadyRegisteredException extends DomainException {
+  constructor() {
+    super('CONFLICT', 'MEMBER_ALREADY_REGISTERED', 'This person already has this role here');
   }
 }

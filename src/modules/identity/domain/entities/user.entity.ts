@@ -10,6 +10,7 @@ export interface UserProps {
   id: string;
   email: string;
   passwordHash: string | null;
+  mustChangePassword: boolean;
   firstName: string;
   lastName: string;
   avatarUrl: string | null;
@@ -22,6 +23,7 @@ export class User {
   readonly id: string;
   readonly email: string;
   readonly passwordHash: string | null;
+  readonly mustChangePassword: boolean;
   readonly firstName: string;
   readonly lastName: string;
   readonly avatarUrl: string | null;
@@ -33,6 +35,7 @@ export class User {
     this.id = props.id;
     this.email = props.email;
     this.passwordHash = props.passwordHash;
+    this.mustChangePassword = props.mustChangePassword;
     this.firstName = props.firstName;
     this.lastName = props.lastName;
     this.avatarUrl = props.avatarUrl;
@@ -45,8 +48,8 @@ export class User {
     return this.status === UserStatus.SUSPENDED;
   }
 
-  hasVerifiedEmail(): boolean {
-    return this.emailVerifiedAt !== null;
+  isActive(): boolean {
+    return this.status === UserStatus.ACTIVE;
   }
 }
 

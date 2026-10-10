@@ -13,6 +13,11 @@ export const IS_PUBLIC_KEY = 'auth:isPublic';
 export const ROLES_KEY = 'auth:roles';
 export const PLATFORM_ADMIN_KEY = 'auth:platformAdmin';
 
+export const ALLOW_PASSWORD_CHANGE_KEY = 'auth:allowDuringPasswordChange';
+
+/** Keeps a route usable while the account still has a temporary password. Everything else is blocked. */
+export const AllowDuringPasswordChange = () => SetMetadata(ALLOW_PASSWORD_CHANGE_KEY, true);
+
 /** Opts a route out of the global JWT guard. */
 export const Public = () => SetMetadata(IS_PUBLIC_KEY, true);
 

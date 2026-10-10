@@ -86,6 +86,7 @@ describe('Institution use cases', () => {
       userId: 'u',
       email: 'u@example.com',
       isPlatformAdmin: false,
+  mustChangePassword: false,
       memberships: [{ id: 'm', institutionId: mine.id, role: Role.ADMIN }],
     };
 

@@ -1,20 +1,21 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import type { Prisma } from '../../../../shared/infrastructure/prisma/generated/client.js';
 import {
-  DomainException,
-  PersistenceException,
-} from '../../../../shared/domain/domain.exception.js';
-import { Prisma } from '../../../../shared/infrastructure/prisma/generated/client.js';
+  PrismaErrorCode,
+  runQuery,
+} from '../../../../shared/infrastructure/prisma/prisma-errors.js';
 import { PrismaService } from '../../../../shared/infrastructure/prisma/prisma.service.js';
 import {
   EmailAlreadyRegisteredException,
   InstitutionNotFoundException,
+  MemberAlreadyRegisteredException,
 } from '../../domain/exceptions/identity.exceptions.js';
 import type { Member } from '../../domain/member.js';
-import type { MemberRepository, NewMember } from '../../domain/ports/member.repository.js';
-
-const UNIQUE_VIOLATION = 'P2002';
-const FOREIGN_KEY_VIOLATION = 'P2003';
-const RECORD_NOT_FOUND = 'P2025';
+import type {
+  MemberRepository,
+  NewMember,
+  NewMembership,
+} from '../../domain/ports/member.repository.js';
 
 const memberSelect = {
   id: true,
@@ -38,18 +39,11 @@ function toMember(row: MemberRow): Member {
   };
 }
 
-function translate(error: unknown): DomainException | null {
-  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) {
-    return null;
-  }
-  if (error.code === UNIQUE_VIOLATION) {
-    return new EmailAlreadyRegisteredException();
-  }
-  // A missing institution surfaces as either code, depending on how Prisma resolves the nested connect
-  return error.code === FOREIGN_KEY_VIOLATION || error.code === RECORD_NOT_FOUND
-    ? new InstitutionNotFoundException()
-    : null;
-}
+// A missing institution surfaces as either code, depending on how Prisma resolves the nested connect
+const missingInstitution = {
+  [PrismaErrorCode.FOREIGN_KEY_VIOLATION]: () => new InstitutionNotFoundException(),
+  [PrismaErrorCode.RECORD_NOT_FOUND]: () => new InstitutionNotFoundException(),
+};
 
 @Injectable()
 export class PrismaMemberRepository implements MemberRepository {
@@ -57,51 +51,71 @@ export class PrismaMemberRepository implements MemberRepository {
 
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
-  async register(member: NewMember): Promise<Member> {
-    try {
-      // A nested create is one transaction: no account can exist without its membership
-      const row = await this.prisma.membership.create({
-        data: {
-          role: member.role,
-          isActive: member.activate,
-          institution: { connect: { id: member.institutionId } },
-          user: {
-            create: {
-              email: member.email,
-              passwordHash: member.passwordHash,
-              firstName: member.firstName,
-              lastName: member.lastName,
-              status: member.activate ? 'ACTIVE' : 'PENDING_ONBOARDING',
+  register(member: NewMember): Promise<Member> {
+    return runQuery(
+      this.logger,
+      async () =>
+        // A nested create is one transaction: no account can exist without its membership
+        toMember(
+          await this.prisma.membership.create({
+            data: {
+              role: member.role,
+              isActive: member.activate,
+              institution: { connect: { id: member.institutionId } },
+              user: {
+                create: {
+                  email: member.email,
+                  passwordHash: member.passwordHash,
+                  mustChangePassword: true,
+                  firstName: member.firstName,
+                  lastName: member.lastName,
+                  status: member.activate ? 'ACTIVE' : 'PENDING_ONBOARDING',
+                },
+              },
             },
-          },
-        },
-        select: memberSelect,
-      });
-      return toMember(row);
-    } catch (error) {
-      throw this.toDomain(error);
-    }
+            select: memberSelect,
+          }),
+        ),
+      {
+        ...missingInstitution,
+        [PrismaErrorCode.UNIQUE_VIOLATION]: () => new EmailAlreadyRegisteredException(),
+      },
+    );
   }
 
-  async listByInstitution(institutionId: string): Promise<Member[]> {
-    try {
+  addMembership(membership: NewMembership): Promise<Member> {
+    return runQuery(
+      this.logger,
+      async () =>
+        toMember(
+          await this.prisma.membership.create({
+            data: {
+              role: membership.role,
+              isActive: membership.activate,
+              institution: { connect: { id: membership.institutionId } },
+              user: {
+                connect: { id: membership.userId },
+                ...(membership.activateAccount ? { update: { status: 'ACTIVE' } } : {}),
+              },
+            },
+            select: memberSelect,
+          }),
+        ),
+      {
+        ...missingInstitution,
+        [PrismaErrorCode.UNIQUE_VIOLATION]: () => new MemberAlreadyRegisteredException(),
+      },
+    );
+  }
+
+  listByInstitution(institutionId: string): Promise<Member[]> {
+    return runQuery(this.logger, async () => {
       const rows = await this.prisma.membership.findMany({
         where: { institutionId },
         select: memberSelect,
         orderBy: [{ user: { lastName: 'asc' } }, { user: { firstName: 'asc' } }],
       });
       return rows.map(toMember);
-    } catch (error) {
-      throw this.toDomain(error);
-    }
-  }
-
-  private toDomain(error: unknown): DomainException {
-    const known = translate(error);
-    if (known) {
-      return known;
-    }
-    this.logger.error(error instanceof Error ? error.stack : String(error));
-    return new PersistenceException();
+    });
   }
 }

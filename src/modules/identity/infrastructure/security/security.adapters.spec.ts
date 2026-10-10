@@ -15,6 +15,7 @@ const user: AuthenticatedUser = {
   userId: 'user-1',
   email: 'ada@example.com',
   isPlatformAdmin: false,
+  mustChangePassword: false,
   memberships: [{ id: 'm-1', institutionId: 'inst-1', role: Role.TEACHER }],
 };
 
@@ -70,7 +71,8 @@ describe('JwtTokenService', () => {
   it('rejects expired tokens', async () => {
     const signer = new JwtService({});
     const expired = await signer.signAsync(
-      { typ: 'access', email: user.email, isPlatformAdmin: false, memberships: [] },
+      { typ: 'access', email: user.email, isPlatformAdmin: false,
+  mustChangePassword: false, memberships: [] },
       { subject: user.userId, secret: env.JWT_ACCESS_SECRET, expiresIn: -10 },
     );
 

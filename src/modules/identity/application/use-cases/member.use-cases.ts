@@ -1,8 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import type { AuthenticatedUser } from '../../../../shared/domain/auth/authenticated-user.js';
 import type { Role } from '../../../../shared/domain/auth/role.js';
-import { normalizeEmail } from '../../domain/entities/user.entity.js';
-import { EmailAlreadyRegisteredException } from '../../domain/exceptions/identity.exceptions.js';
+import { normalizeEmail, type User } from '../../domain/entities/user.entity.js';
+import { AccountSuspendedException } from '../../domain/exceptions/identity.exceptions.js';
 import { assertCanRegister, requiresOnboarding, type Member } from '../../domain/member.js';
 import type { MemberRepository } from '../../domain/ports/member.repository.js';
 import type { PasswordHasher } from '../../domain/ports/password-hasher.js';
@@ -19,8 +19,12 @@ export interface RegisterMemberInput {
 
 export interface RegisteredMember {
   member: Member;
-  /** Shown to the admin once so they can hand it over; only its hash is stored. */
-  temporaryPassword: string;
+  /**
+   * For a new account: shown to the admin once so they can hand it over; only
+   * its hash is stored. Null when the person already had an account, because
+   * they keep signing in with their own credentials.
+   */
+  temporaryPassword: string | null;
 }
 
 const generateTemporaryPassword = () => randomBytes(12).toString('base64url');
@@ -34,15 +38,19 @@ export class RegisterMemberUseCase {
   ) {}
 
   /**
-   * Creates an account for a person in an institution. Teachers and Students
-   * start pending, with an inactive membership, until their ID is reviewed.
+   * Gives a person a role in an institution. One person (one email) can belong
+   * to several institutions, so an existing account gains a membership instead
+   * of being duplicated or refused.
    */
   async execute(input: RegisterMemberInput): Promise<RegisteredMember> {
     assertCanRegister(input.actor, input.role);
     const email = normalizeEmail(input.email);
-    if (await this.users.findByEmail(email)) {
-      throw new EmailAlreadyRegisteredException();
-    }
+    const existing = await this.users.findByEmail(email);
+    return existing ? this.addToExisting(existing, input) : this.createAccount(email, input);
+  }
+
+  /** New accounts for Teachers and Students start pending, with an inactive membership, until their ID is reviewed. */
+  private async createAccount(email: string, input: RegisterMemberInput): Promise<RegisteredMember> {
     const temporaryPassword = this.generatePassword();
     const member = await this.members.register({
       institutionId: input.institutionId,
@@ -54,6 +62,26 @@ export class RegisterMemberUseCase {
       activate: !requiresOnboarding(input.role),
     });
     return { member, temporaryPassword };
+  }
+
+  /**
+   * Identity is verified once per person, not once per institution: someone
+   * already active gets the new role immediately, while someone still pending
+   * gets it when their ID check is approved. The name on the account is kept.
+   */
+  private async addToExisting(user: User, input: RegisterMemberInput): Promise<RegisteredMember> {
+    if (user.isSuspended()) {
+      throw new AccountSuspendedException();
+    }
+    const trusted = !requiresOnboarding(input.role);
+    const member = await this.members.addMembership({
+      userId: user.id,
+      institutionId: input.institutionId,
+      role: input.role,
+      activate: trusted || user.isActive(),
+      activateAccount: trusted,
+    });
+    return { member, temporaryPassword: null };
   }
 }
 

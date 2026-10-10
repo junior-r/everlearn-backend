@@ -3,7 +3,8 @@ import type { AuthenticatedUser } from '../../../../shared/domain/auth/authentic
 import { Role } from '../../../../shared/domain/auth/role.js';
 import { UserStatus } from '../../domain/entities/user.entity.js';
 import {
-  EmailAlreadyRegisteredException,
+  AccountSuspendedException,
+  MemberAlreadyRegisteredException,
   InstitutionNotFoundException,
   MemberRoleNotAllowedException,
 } from '../../domain/exceptions/identity.exceptions.js';
@@ -17,12 +18,14 @@ const institutionAdmin: AuthenticatedUser = {
   userId: 'admin-1',
   email: 'admin@example.com',
   isPlatformAdmin: false,
+  mustChangePassword: false,
   memberships: [{ id: 'm-admin', institutionId: INSTITUTION, role: Role.ADMIN }],
 };
 const platformAdmin: AuthenticatedUser = {
   userId: 'root',
   email: 'root@example.com',
   isPlatformAdmin: true,
+  mustChangePassword: false,
   memberships: [],
 };
 
@@ -79,7 +82,7 @@ describe('RegisterMemberUseCase', () => {
     const { register, login } = setup();
     const { temporaryPassword } = await register.execute(student);
 
-    const session = await login.execute({ email: 'grace@example.com', password: temporaryPassword });
+    const session = await login.execute({ email: 'grace@example.com', password: temporaryPassword ?? "" });
 
     expect(session.user.status).toBe(UserStatus.PENDING_ONBOARDING);
     expect(session.user.memberships).toEqual([]);
@@ -118,18 +121,95 @@ describe('RegisterMemberUseCase', () => {
     });
 
     expect(member).toMatchObject({ status: UserStatus.ACTIVE, isActive: true });
-    const session = await login.execute({ email: member.email, password: temporaryPassword });
+    const session = await login.execute({ email: member.email, password: temporaryPassword ?? "" });
     expect(session.user.memberships).toEqual([
       { id: member.membershipId, institutionId: INSTITUTION, role: Role.ADMIN },
     ]);
   });
 
-  it('rejects an email that already has an account, ignoring case', async () => {
-    const { register, users } = setup();
-    users.seed({ email: 'grace@example.com' });
+  describe('when the email already has an account (one person, several institutions)', () => {
+    it('adds a membership to the existing account instead of creating or refusing', async () => {
+      const { register, users, login } = setup();
+      const existing = users.seed({ email: 'grace@example.com', firstName: 'Grace', lastName: 'Hopper' });
+      users.memberships.set(existing.id, [{ id: 'm-a', institutionId: 'inst-a', role: Role.TEACHER }]);
 
-    await expect(register.execute(student)).rejects.toBeInstanceOf(EmailAlreadyRegisteredException);
-    expect(users.users.size).toBe(1);
+      const { member, temporaryPassword } = await register.execute({
+        ...student,
+        email: ' GRACE@example.com ',
+        firstName: 'Typed Differently',
+      });
+
+      expect(users.users.size).toBe(1);
+      expect(member).toMatchObject({ userId: existing.id, role: Role.STUDENT, firstName: 'Grace' });
+      // They keep their own credentials: no temporary password is issued and theirs is untouched
+      expect(temporaryPassword).toBeNull();
+      const session = await login.execute({ email: 'grace@example.com', password: 'correct-password' });
+      expect(session.user.mustChangePassword).toBe(false);
+      expect(session.user.memberships).toEqual([
+        { id: 'm-a', institutionId: 'inst-a', role: Role.TEACHER },
+        { id: member.membershipId, institutionId: INSTITUTION, role: Role.STUDENT },
+      ]);
+    });
+
+    it('activates the new role at once for someone already verified', async () => {
+      const { register, users } = setup();
+      users.seed({ email: 'grace@example.com', status: UserStatus.ACTIVE });
+
+      const { member } = await register.execute(student);
+
+      expect(member).toMatchObject({ status: UserStatus.ACTIVE, isActive: true });
+    });
+
+    it('keeps the new role inactive for someone whose ID has not been approved yet', async () => {
+      const { register, users, members } = setup();
+      const pending = users.seed({ email: 'grace@example.com', status: UserStatus.PENDING_ONBOARDING });
+
+      const { member } = await register.execute(student);
+
+      expect(member).toMatchObject({ status: UserStatus.PENDING_ONBOARDING, isActive: false });
+      expect(await users.findActiveMemberships(pending.id)).toEqual([]);
+
+      // One approval verifies the person, which unlocks every role they were registered for
+      members.activate(pending.id);
+      expect(await users.findActiveMemberships(pending.id)).toHaveLength(1);
+    });
+
+    it('lets a Platform Admin appoint a pending person as Institution Admin, activating their account', async () => {
+      const { register, users } = setup();
+      const pending = users.seed({ email: 'grace@example.com', status: UserStatus.PENDING_ONBOARDING });
+
+      const { member } = await register.execute({ ...student, actor: platformAdmin, role: Role.ADMIN });
+
+      expect(member).toMatchObject({ isActive: true, status: UserStatus.ACTIVE });
+      expect((await users.findById(pending.id))?.status).toBe(UserStatus.ACTIVE);
+    });
+
+    it('refuses the same role in the same institution twice, but allows a second role', async () => {
+      const { register, users } = setup();
+      users.seed({ email: 'grace@example.com' });
+      await register.execute(student);
+
+      await expect(register.execute(student)).rejects.toBeInstanceOf(MemberAlreadyRegisteredException);
+      await expect(register.execute({ ...student, role: Role.TEACHER })).resolves.toBeDefined();
+    });
+
+    it('refuses to add a role to a suspended account', async () => {
+      const { register, users, members } = setup();
+      users.seed({ email: 'grace@example.com', status: UserStatus.SUSPENDED });
+
+      await expect(register.execute(student)).rejects.toBeInstanceOf(AccountSuspendedException);
+      expect(members.members).toHaveLength(0);
+    });
+
+    it('still applies the role rules: an Institution Admin cannot make an existing user an admin', async () => {
+      const { register, users, members } = setup();
+      users.seed({ email: 'grace@example.com' });
+
+      await expect(register.execute({ ...student, role: Role.ADMIN })).rejects.toBeInstanceOf(
+        MemberRoleNotAllowedException,
+      );
+      expect(members.members).toHaveLength(0);
+    });
   });
 
   it('reports a missing institution', async () => {
@@ -162,7 +242,8 @@ describe('EnsurePlatformAdminUseCase', () => {
     await expect(useCase.execute(credentials)).resolves.toBe(true);
 
     const session = await login.execute({ email: 'root@example.com', password: credentials.password });
-    expect(session.user).toMatchObject({ isPlatformAdmin: true, status: UserStatus.ACTIVE });
+    expect(session.user).toMatchObject({ isPlatformAdmin: true,
+  mustChangePassword: false, status: UserStatus.ACTIVE });
   });
 
   it('never touches an existing account, so restarting cannot reset a password or grant admin rights', async () => {

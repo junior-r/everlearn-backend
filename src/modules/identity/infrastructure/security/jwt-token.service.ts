@@ -7,15 +7,22 @@ import type {
   AuthenticatedUser,
   MembershipClaim,
 } from '../../../../shared/domain/auth/authenticated-user.js';
-import type { RefreshTokenClaims, TokenIssuer } from '../../domain/ports/token-issuer.js';
+import type {
+  GoogleLinkTicket,
+  RefreshTokenClaims,
+  TokenIssuer,
+} from '../../domain/ports/token-issuer.js';
 
 const ALGORITHM = 'HS256';
+const GOOGLE_LINK_TTL_SECONDS = 600;
 
 interface AccessTokenPayload {
   sub: string;
   typ: 'access';
   email: string;
   isPlatformAdmin: boolean;
+  // Present only while the account has a temporary password
+  mustChangePassword?: true;
   memberships: MembershipClaim[];
 }
 
@@ -26,7 +33,16 @@ interface RefreshTokenPayload {
   exp: number;
 }
 
-/** Signs and verifies both token kinds; each kind has its own secret. */
+interface GoogleLinkPayload {
+  sub: string;
+  typ: 'google-link';
+  state: string;
+}
+
+/**
+ * Signs and verifies every token kind. Access and refresh tokens have their own
+ * secrets; each payload also carries its kind, so one can never pass for another.
+ */
 @Injectable()
 export class JwtTokenService implements TokenIssuer, AccessTokenVerifier {
   constructor(
@@ -39,6 +55,7 @@ export class JwtTokenService implements TokenIssuer, AccessTokenVerifier {
       typ: 'access',
       email: user.email,
       isPlatformAdmin: user.isPlatformAdmin,
+      ...(user.mustChangePassword ? { mustChangePassword: true } : {}),
       memberships: user.memberships,
     };
     return this.jwt.signAsync(payload, {
@@ -60,40 +77,56 @@ export class JwtTokenService implements TokenIssuer, AccessTokenVerifier {
     });
   }
 
+  issueGoogleLinkTicket(ticket: GoogleLinkTicket): Promise<string> {
+    const payload: Omit<GoogleLinkPayload, 'sub'> = { typ: 'google-link', state: ticket.state };
+    return this.jwt.signAsync(payload, {
+      subject: ticket.userId,
+      secret: this.config.jwt.accessSecret,
+      expiresIn: GOOGLE_LINK_TTL_SECONDS,
+      algorithm: ALGORITHM,
+    });
+  }
+
   async verifyAccessToken(token: string): Promise<AuthenticatedUser | null> {
-    try {
-      const payload = await this.jwt.verifyAsync<AccessTokenPayload>(token, {
-        secret: this.config.jwt.accessSecret,
-        algorithms: [ALGORITHM],
-      });
-      if (payload.typ !== 'access') {
-        return null;
-      }
-      return {
-        userId: payload.sub,
-        email: payload.email,
-        isPlatformAdmin: payload.isPlatformAdmin,
-        memberships: payload.memberships,
-      };
-    } catch {
+    const payload = await this.verify<AccessTokenPayload>(token, this.config.jwt.accessSecret);
+    if (payload?.typ !== 'access') {
       return null;
     }
+    return {
+      userId: payload.sub,
+      email: payload.email,
+      isPlatformAdmin: payload.isPlatformAdmin,
+      mustChangePassword: payload.mustChangePassword === true,
+      memberships: payload.memberships,
+    };
   }
 
   async verifyRefreshToken(token: string): Promise<RefreshTokenClaims | null> {
+    const payload = await this.verify<RefreshTokenPayload>(token, this.config.jwt.refreshSecret);
+    if (payload?.typ !== 'refresh' || !payload.jti) {
+      return null;
+    }
+    return {
+      userId: payload.sub,
+      tokenId: payload.jti,
+      expiresAt: new Date(payload.exp * 1000),
+    };
+  }
+
+  async verifyGoogleLinkTicket(token: string): Promise<GoogleLinkTicket | null> {
+    const payload = await this.verify<GoogleLinkPayload>(token, this.config.jwt.accessSecret);
+    if (payload?.typ !== 'google-link' || !payload.state) {
+      return null;
+    }
+    return { userId: payload.sub, state: payload.state };
+  }
+
+  private async verify<Payload extends object>(
+    token: string,
+    secret: string,
+  ): Promise<Payload | null> {
     try {
-      const payload = await this.jwt.verifyAsync<RefreshTokenPayload>(token, {
-        secret: this.config.jwt.refreshSecret,
-        algorithms: [ALGORITHM],
-      });
-      if (payload.typ !== 'refresh' || !payload.jti) {
-        return null;
-      }
-      return {
-        userId: payload.sub,
-        tokenId: payload.jti,
-        expiresAt: new Date(payload.exp * 1000),
-      };
+      return await this.jwt.verifyAsync<Payload>(token, { secret, algorithms: [ALGORITHM] });
     } catch {
       return null;
     }

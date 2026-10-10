@@ -205,7 +205,9 @@ describe('Auth HTTP flow', () => {
     await probe(await ctx.tokenFor(EMAIL)).expect(200);
   });
 
-  it('completes the Google redirect flow for a registered account, leaving only a refresh cookie', async () => {
+  it('completes the Google redirect flow for a linked account, leaving only a refresh cookie', async () => {
+    const user = await ctx.users.findByEmail(EMAIL);
+    ctx.users.identities.set('GOOGLE:google-sub-1', user?.id ?? '');
     const agent = request.agent(ctx.server);
     const start = await agent.get('/auth/google').expect(302);
     const state = new URL(start.headers.location).searchParams.get('state');
@@ -219,16 +221,16 @@ describe('Auth HTTP flow', () => {
     expect(refreshed.body.user.email).toBe(EMAIL);
   });
 
-  it('turns away a Google account that no institution registered, creating nothing', async () => {
-    ctx.google.identity = { ...ctx.google.identity, email: 'stranger@example.com' };
+  it('turns away a Google account nobody linked, even when its email matches an account', async () => {
     const agent = request.agent(ctx.server);
     const start = await agent.get('/auth/google').expect(302);
     const state = new URL(start.headers.location).searchParams.get('state');
 
     const callback = await agent.get(`/auth/google/callback?code=auth-code&state=${state}`).expect(302);
 
-    expect(callback.headers.location).toBe(`${FRONTEND_URL}/login?error=ACCOUNT_NOT_REGISTERED`);
+    expect(callback.headers.location).toBe(`${FRONTEND_URL}/login?error=GOOGLE_ACCOUNT_NOT_LINKED`);
     expect(ctx.users.users.size).toBe(1);
+    expect(ctx.users.identities.size).toBe(0);
     await agent.post('/auth/refresh').expect(401);
   });
 

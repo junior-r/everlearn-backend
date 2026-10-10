@@ -127,19 +127,21 @@ model Institution {
 }
 
 model User {
-  id              String     @id @default(uuid(7)) @db.Uuid
-  email           String     @unique
-  emailVerifiedAt DateTime?
+  id                 String     @id @default(uuid(7)) @db.Uuid
+  email              String     @unique
+  emailVerifiedAt    DateTime?
   // Null for accounts that only sign in through an OAuth provider
-  passwordHash    String?
-  firstName       String
-  lastName        String
-  phone           String?
-  avatarUrl       String?
-  status          UserStatus @default(PENDING_ONBOARDING)
-  isPlatformAdmin Boolean    @default(false)
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
+  passwordHash       String?
+  firstName          String
+  lastName           String
+  phone              String?
+  avatarUrl          String?
+  status             UserStatus @default(PENDING_ONBOARDING)
+  isPlatformAdmin    Boolean    @default(false)
+  // True while the password is a temporary one issued by an admin
+  mustChangePassword Boolean    @default(false)
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
 
   oauthAccounts          OAuthAccount[]
   profile                Profile?

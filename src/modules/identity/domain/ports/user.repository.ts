@@ -9,6 +9,7 @@ export type OAuthProvider = (typeof OAuthProvider)[keyof typeof OAuthProvider];
 export interface NewUser {
   email: string;
   passwordHash: string | null;
+  mustChangePassword: boolean;
   firstName: string;
   lastName: string;
   avatarUrl: string | null;
@@ -23,21 +24,16 @@ export interface OAuthIdentity {
   providerEmail: string;
 }
 
-export interface LinkOAuthOptions {
-  // Drops the existing password and marks the email verified; see LoginWithGoogleUseCase
-  resetUnverifiedCredentials: boolean;
-}
-
 export interface UserRepository {
   findById(id: string): Promise<User | null>;
   findByEmail(email: string): Promise<User | null>;
   findByOAuthIdentity(identity: OAuthIdentity): Promise<User | null>;
   create(user: NewUser): Promise<User>;
-  linkOAuthIdentity(
-    userId: string,
-    identity: OAuthIdentity,
-    options: LinkOAuthOptions,
-  ): Promise<void>;
+  /** Stores a password the user chose themselves, which ends any forced password change. */
+  setPassword(userId: string, passwordHash: string): Promise<void>;
+  hasOAuthIdentity(userId: string, provider: OAuthProvider): Promise<boolean>;
+  /** Rejects with GoogleAccountAlreadyLinkedException if either side is already linked. */
+  linkOAuthIdentity(userId: string, identity: OAuthIdentity): Promise<void>;
   recordOAuthLogin(identity: OAuthIdentity): Promise<void>;
   findActiveMemberships(userId: string): Promise<MembershipClaim[]>;
 }

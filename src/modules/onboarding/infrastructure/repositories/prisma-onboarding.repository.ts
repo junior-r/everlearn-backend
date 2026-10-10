@@ -113,7 +113,7 @@ export class PrismaOnboardingRepository implements OnboardingRepository {
     application: OnboardingApplication,
     reviewerMembershipId: string | null,
   ): Promise<void> {
-    const { userId, institutionId, requestedRole, confirmed } = application;
+    const { userId, confirmed } = application;
     return runQuery(this.logger, async () => {
       const recordReview = this.prisma.onboardingApplication.update({
         where: { id: application.id },
@@ -136,9 +136,9 @@ export class PrismaOnboardingRepository implements OnboardingRepository {
             ...(confirmed ? { firstName: confirmed.firstName, lastName: confirmed.lastName } : {}),
           },
         }),
-        // Only the membership this application was for; other institutions decide for themselves
+        // Identity is verified once per person, so every role they were registered for becomes usable
         this.prisma.membership.updateMany({
-          where: { userId, institutionId: institutionId ?? undefined, role: requestedRole ?? undefined },
+          where: { userId, isActive: false },
           data: { isActive: true },
         }),
       ]);

@@ -1,10 +1,18 @@
 import { ForbiddenException, UnauthorizedException, type ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { AccessTokenVerifier } from '../../domain/auth/access-token-verifier.js';
-import type { AuthenticatedUser } from '../../domain/auth/authenticated-user.js';
+import {
+  PasswordChangeRequiredException,
+  type AuthenticatedUser,
+} from '../../domain/auth/authenticated-user.js';
 import { Role } from '../../domain/auth/role.js';
 import type { AuthenticatedRequest } from '../authenticated-request.js';
-import { IS_PUBLIC_KEY, PLATFORM_ADMIN_KEY, ROLES_KEY } from '../decorators/auth.decorators.js';
+import {
+  ALLOW_PASSWORD_CHANGE_KEY,
+  IS_PUBLIC_KEY,
+  PLATFORM_ADMIN_KEY,
+  ROLES_KEY,
+} from '../decorators/auth.decorators.js';
 import { JwtAuthGuard } from './jwt-auth.guard.js';
 import { RolesGuard } from './roles.guard.js';
 
@@ -27,6 +35,7 @@ const teacher: AuthenticatedUser = {
   userId: 'user-1',
   email: 'ada@example.com',
   isPlatformAdmin: false,
+  mustChangePassword: false,
   memberships: [
     { id: 'm-1', institutionId: 'inst-1', role: Role.TEACHER },
     { id: 'm-2', institutionId: 'inst-2', role: Role.STUDENT },
@@ -60,6 +69,29 @@ describe('JwtAuthGuard', () => {
     const context = contextFor({ headers: {} }, { [IS_PUBLIC_KEY]: true });
 
     await expect(guard.canActivate(context)).resolves.toBe(true);
+  });
+
+  describe('with a temporary-password token', () => {
+    const pendingVerifier: AccessTokenVerifier = {
+      verifyAccessToken: () => Promise.resolve({ ...teacher, mustChangePassword: true }),
+    };
+    const pendingGuard = new JwtAuthGuard(new Reflector(), pendingVerifier);
+    const headers = { authorization: 'Bearer valid' };
+
+    it('blocks every route by default, without attaching the user', async () => {
+      const request: Partial<AuthenticatedRequest> = { headers };
+
+      await expect(pendingGuard.canActivate(contextFor(request, {}))).rejects.toBeInstanceOf(
+        PasswordChangeRequiredException,
+      );
+      expect(request.user).toBeUndefined();
+    });
+
+    it('allows only routes explicitly opened for it', async () => {
+      const context = contextFor({ headers }, { [ALLOW_PASSWORD_CHANGE_KEY]: true });
+
+      await expect(pendingGuard.canActivate(context)).resolves.toBe(true);
+    });
   });
 });
 
@@ -117,7 +149,8 @@ describe('RolesGuard', () => {
   });
 
   describe('for a Platform Admin', () => {
-    const admin: AuthenticatedUser = { ...teacher, isPlatformAdmin: true, memberships: [] };
+    const admin: AuthenticatedUser = { ...teacher, isPlatformAdmin: true,
+  mustChangePassword: false, memberships: [] };
     const anyInstitution = '11111111-1111-4111-8111-111111111111';
 
     it('allows acting on any institution named in the header, without a membership', () => {

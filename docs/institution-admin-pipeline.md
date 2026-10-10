@@ -24,14 +24,15 @@ A chain of trust: a Platform Admin creates institutions and appoints their Insti
 | Teacher, Student | Nothing in the admin API |
 
 - **Endpoints:** `/institutions`, `/subjects`, `/pensums` (+ `/pensums/:id/subjects/:subjectId`), `/members`, `GET /onboarding/applications/pending`, `POST /onboarding/application/:id/review`, `GET /onboarding/application/:id/document`.
-- **Registering a member** returns a random temporary password once; only its hash is stored. Institution Admins are created active; Teachers and Students start `PENDING_ONBOARDING`.
+- **Registering a member** returns a random temporary password once; only its hash is stored, and it must be replaced at first sign-in (see `account-security.md`). Institution Admins are created active; Teachers and Students start `PENDING_ONBOARDING`.
+- **One person, several institutions.** Registering an email that already has an account adds a `Membership` to it instead of creating a second account: no temporary password is issued and the name on the account is kept. Identity is verified once per person, so someone already active gets the new role at once, and someone still pending gets it when their ID is approved.
 - **Review** shows three things side by side: the account as the admin registered it, what the OCR read, and what the member confirmed. The account keeps its registered name until approval, then adopts the confirmed one.
 - **Rejecting** requires a reason, which the member sees. Their retry is a new application; the rejected one is kept as history.
 - **Deleting an institution** is only allowed while it has no members; otherwise deactivate it. Members of an inactive institution lose their roles at their next token refresh.
 
 ## Known gaps
 
-- The temporary password is not forced to change at first sign-in, and there is no password change or reset flow yet. Until then the admin who registered a member knows their password.
-- A person can belong to only one institution: registering an email that already has an account is refused.
+- When a pending person was registered by two institutions, only the one their application is tied to reviews them; its approval activates their roles in both.
+- Approval reactivates every inactive membership of the person. If deactivating a single membership is added later, it needs its own marker.
 - No edit, suspend or remove actions for members.
 - Coordinators and Guardians cannot be registered yet.

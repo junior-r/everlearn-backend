@@ -36,7 +36,7 @@ export interface OnboardingRepository {
   listAwaitingReview(institutionId: string): Promise<ApplicationUnderReview[]>;
   /**
    * Atomically records the review. An approval also activates the account and
-   * its membership, and adopts the names the applicant confirmed from their ID.
+   * all its pending memberships, and adopts the names the applicant confirmed from their ID.
    */
   completeReview(application: OnboardingApplication, reviewerMembershipId: string | null): Promise<void>;
 }

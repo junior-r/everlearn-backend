@@ -9,6 +9,8 @@ export interface AuthUserView {
   avatarUrl: string | null;
   status: UserStatus;
   isPlatformAdmin: boolean;
+  mustChangePassword: boolean;
+  googleLinked: boolean;
   memberships: MembershipClaim[];
 }
 

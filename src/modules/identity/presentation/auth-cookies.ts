@@ -3,7 +3,9 @@ import type { AppConfig } from '../../../config/app-config.js';
 
 const REFRESH_COOKIE = 'everlearn_refresh';
 const OAUTH_STATE_COOKIE = 'everlearn_oauth_state';
-const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+const GOOGLE_LINK_COOKIE = 'everlearn_google_link';
+const OAUTH_TTL_MS = 10 * 60 * 1000;
+const OAUTH_PATH = '/auth/google';
 
 function baseOptions(config: AppConfig, path: string): CookieOptions {
   return { httpOnly: true, secure: config.isProduction, sameSite: 'lax', path };
@@ -15,7 +17,7 @@ function readCookie(request: Request, name: string): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
-/** Reads and writes the auth cookies. Both are httpOnly and scoped to `/auth`. */
+/** Reads and writes the auth cookies. All are httpOnly and scoped under `/auth`. */
 export class AuthCookies {
   constructor(private readonly config: AppConfig) {}
 
@@ -38,14 +40,30 @@ export class AuthCookies {
     return readCookie(request, OAUTH_STATE_COOKIE);
   }
 
+  /** Starting a sign-in cancels any pending link attempt, so the callback cannot confuse the two. */
   setOAuthState(response: Response, state: string): void {
+    this.clearOAuthCookies(response);
     response.cookie(OAUTH_STATE_COOKIE, state, {
-      ...baseOptions(this.config, '/auth/google'),
-      maxAge: OAUTH_STATE_TTL_MS,
+      ...baseOptions(this.config, OAUTH_PATH),
+      maxAge: OAUTH_TTL_MS,
     });
   }
 
-  clearOAuthState(response: Response): void {
-    response.clearCookie(OAUTH_STATE_COOKIE, baseOptions(this.config, '/auth/google'));
+  readGoogleLinkTicket(request: Request): string | undefined {
+    return readCookie(request, GOOGLE_LINK_COOKIE);
+  }
+
+  setGoogleLinkTicket(response: Response, ticket: string): void {
+    this.clearOAuthCookies(response);
+    response.cookie(GOOGLE_LINK_COOKIE, ticket, {
+      ...baseOptions(this.config, OAUTH_PATH),
+      maxAge: OAUTH_TTL_MS,
+    });
+  }
+
+  clearOAuthCookies(response: Response): void {
+    const options = baseOptions(this.config, OAUTH_PATH);
+    response.clearCookie(OAUTH_STATE_COOKIE, options);
+    response.clearCookie(GOOGLE_LINK_COOKIE, options);
   }
 }
