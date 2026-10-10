@@ -53,3 +53,9 @@ export class GoogleOAuthUnavailableException extends DomainException {
     super('UNAVAILABLE', 'GOOGLE_OAUTH_UNAVAILABLE', 'Google sign-in is not configured');
   }
 }
+
+export class SessionStoreUnavailableException extends DomainException {
+  constructor() {
+    super('UNAVAILABLE', 'SESSION_STORE_UNAVAILABLE', 'Sessions cannot be verified right now');
+  }
+}

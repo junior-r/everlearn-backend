@@ -24,8 +24,16 @@ One security layer that all future modules reuse: routes are private by default 
 - **Errors:** adapters throw Domain Exceptions; `DomainExceptionFilter` maps them to `{ statusCode, code, message }`.
 - **Google account linking:** matched by Google `sub`, then by verified email. Linking to an account whose email was never verified removes its password, so someone who pre-registered another person's address cannot keep access.
 
+## Hardening (Redis)
+
+- **Logout revokes the refresh token.** Each refresh token has a unique id (`jti`); logout stores it in a Redis blocklist until the token's own expiry. `refresh` checks the blocklist and fails closed (503) if Redis cannot answer.
+- **One refresh token per session.** `refresh` returns a new access token but keeps the same refresh token, so revoking it ends that session. Sessions last 7 days and do not slide.
+- **Rate limiting** on `login` and `register`: a fixed-window counter in Redis, per client IP, and for `login` also per email so one account cannot be attacked from many IPs. Returns 429 with `Retry-After`. Fails open if Redis is down.
+- **Settings:** `RATE_LIMIT_AUTH_MAX_ATTEMPTS` (default 10) and `RATE_LIMIT_AUTH_WINDOW_SECONDS` (default 60).
+
 ## Known gaps
 
-- Refresh tokens are stateless: no rotation, and logout only clears the cookie. Server-side revocation needs a store (Redis).
-- No rate limiting on `login` / `register`.
+- No "sign out everywhere": revocation is per session.
+- Signing in again does not revoke the refresh token the browser already held.
+- Rate limiting uses `request.ip`. Behind a reverse proxy, `trust proxy` must be configured or every client shares one counter.
 - No email verification or password reset flow.

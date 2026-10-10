@@ -8,6 +8,9 @@
 # generated Prisma client
 /src/shared/infrastructure/prisma/generated
 
+# uploaded ID photos
+/uploads
+
 # testing
 /coverage
 

@@ -13,13 +13,21 @@ export interface GoogleOAuthConfig {
   redirectUri: string;
 }
 
+export interface RateLimitConfig {
+  authMaxAttempts: number;
+  authWindowSeconds: number;
+}
+
 export interface AppConfig {
   port: number;
   isProduction: boolean;
   databaseUrl: string;
+  redisUrl: string;
   frontendUrl: string;
+  uploadsDir: string;
   jwt: JwtConfig;
   google: GoogleOAuthConfig | null;
+  rateLimit: RateLimitConfig;
 }
 
 type Env = Record<string, string | undefined>;
@@ -76,7 +84,9 @@ export function loadAppConfig(env: Env): AppConfig {
     port: positiveInt(env, 'PORT', 4000),
     isProduction: env.NODE_ENV === 'production',
     databaseUrl: required(env, 'DATABASE_URL'),
+    redisUrl: env.REDIS_URL ?? 'redis://localhost:6379',
     frontendUrl: env.FRONTEND_URL ?? 'http://localhost:3000',
+    uploadsDir: env.UPLOADS_DIR ?? './uploads',
     jwt: {
       accessSecret: secret(env, 'JWT_ACCESS_SECRET'),
       refreshSecret: secret(env, 'JWT_REFRESH_SECRET'),
@@ -84,5 +94,9 @@ export function loadAppConfig(env: Env): AppConfig {
       refreshTtlSeconds: positiveInt(env, 'JWT_REFRESH_TTL_SECONDS', 604800),
     },
     google: googleConfig(env),
+    rateLimit: {
+      authMaxAttempts: positiveInt(env, 'RATE_LIMIT_AUTH_MAX_ATTEMPTS', 10),
+      authWindowSeconds: positiveInt(env, 'RATE_LIMIT_AUTH_WINDOW_SECONDS', 60),
+    },
   };
 }

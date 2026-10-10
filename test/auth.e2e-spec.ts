@@ -1,22 +1,22 @@
 import { Controller, Get, type INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
-import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import type { App } from 'supertest/types.js';
-import { AppModule } from '../src/app.module.js';
-import { APP_CONFIG, loadAppConfig } from '../src/config/app-config.js';
-import { GOOGLE_OAUTH_GATEWAY } from '../src/modules/identity/domain/ports/google-oauth.gateway.js';
-import { USER_REPOSITORY } from '../src/modules/identity/domain/ports/user.repository.js';
 import type { MembershipClaim } from '../src/shared/domain/auth/authenticated-user.js';
 import { Role } from '../src/shared/domain/auth/role.js';
-import { PrismaService } from '../src/shared/infrastructure/prisma/prisma.service.js';
 import {
   CurrentMembership,
   Roles,
 } from '../src/shared/presentation/decorators/auth.decorators.js';
-import { FakeGoogleGateway, InMemoryUserRepository } from './support/identity.fakes.js';
-
-const FRONTEND_URL = 'http://frontend.test';
+import type {
+  FakeGoogleGateway,
+  InMemoryRateLimiter,
+  InMemoryUserRepository,
+} from './support/identity.fakes.js';
+import {
+  createTestApp,
+  TEST_FRONTEND_URL as FRONTEND_URL,
+  TEST_RATE_LIMIT,
+} from './support/test-app.js';
 
 @Controller('probe')
 class ProbeController {
@@ -43,34 +43,10 @@ describe('Auth HTTP flow', () => {
   let app: INestApplication<App>;
   let users: InMemoryUserRepository;
   let google: FakeGoogleGateway;
+  let rateLimiter: InMemoryRateLimiter;
 
   beforeEach(async () => {
-    users = new InMemoryUserRepository();
-    google = new FakeGoogleGateway();
-    const moduleRef = await Test.createTestingModule({
-      imports: [AppModule],
-      controllers: [ProbeController],
-    })
-      .overrideProvider(APP_CONFIG)
-      .useValue(
-        loadAppConfig({
-          DATABASE_URL: 'postgresql://unused:unused@localhost:5432/unused',
-          JWT_ACCESS_SECRET: 'a'.repeat(32),
-          JWT_REFRESH_SECRET: 'b'.repeat(32),
-          FRONTEND_URL,
-        }),
-      )
-      .overrideProvider(PrismaService)
-      .useValue({})
-      .overrideProvider(USER_REPOSITORY)
-      .useValue(users)
-      .overrideProvider(GOOGLE_OAUTH_GATEWAY)
-      .useValue(google)
-      .compile();
-
-    app = moduleRef.createNestApplication();
-    app.use(cookieParser());
-    await app.init();
+    ({ app, users, google, rateLimiter } = await createTestApp([ProbeController]));
   });
 
   afterEach(async () => {
@@ -156,6 +132,79 @@ describe('Auth HTTP flow', () => {
       .get('/auth/me')
       .set('Authorization', `Bearer ${refreshed.body.accessToken}`)
       .expect(200);
+  });
+
+  it('revokes the refresh token on logout, so a stolen copy of the cookie stops working', async () => {
+    const server = app.getHttpServer();
+    const registered = await request(server).post('/auth/register').send(ada).expect(201);
+    const stolenCookie = cookieNamed(registered, 'everlearn_refresh')?.split(';')[0] ?? '';
+    await request(server).post('/auth/refresh').set('Cookie', stolenCookie).expect(200);
+
+    await request(server).post('/auth/logout').set('Cookie', stolenCookie).expect(204);
+
+    const replay = await request(server).post('/auth/refresh').set('Cookie', stolenCookie);
+    expect(replay.status).toBe(401);
+    expect(replay.body.code).toBe('INVALID_REFRESH_TOKEN');
+  });
+
+  it('keeps other sessions of the same user alive after one logs out', async () => {
+    const server = app.getHttpServer();
+    const laptop = request.agent(server);
+    const phone = request.agent(server);
+    await laptop.post('/auth/register').send(ada).expect(201);
+    await phone.post('/auth/login').send({ email: ada.email, password: ada.password }).expect(200);
+
+    await laptop.post('/auth/logout').expect(204);
+
+    await phone.post('/auth/refresh').expect(200);
+  });
+
+  it('does not rotate the refresh cookie on refresh', async () => {
+    const agent = request.agent(app.getHttpServer());
+    await agent.post('/auth/register').send(ada).expect(201);
+
+    const refreshed = await agent.post('/auth/refresh').expect(200);
+
+    expect(cookieNamed(refreshed, 'everlearn_refresh')).toBeUndefined();
+  });
+
+  it('rate-limits login attempts with 429 and a Retry-After header', async () => {
+    const server = app.getHttpServer();
+    const attempt = () =>
+      request(server).post('/auth/login').send({ email: ada.email, password: 'wrong-password' });
+    for (let i = 0; i < TEST_RATE_LIMIT; i += 1) {
+      expect((await attempt()).status).toBe(401);
+    }
+
+    const blocked = await attempt();
+
+    expect(blocked.status).toBe(429);
+    expect(blocked.body.code).toBe('RATE_LIMITED');
+    expect(Number(blocked.headers['retry-after'])).toBeGreaterThan(0);
+  });
+
+  it('rate-limits registration per client and leaves other endpoints unaffected', async () => {
+    const server = app.getHttpServer();
+    for (let i = 0; i < TEST_RATE_LIMIT; i += 1) {
+      await request(server)
+        .post('/auth/register')
+        .send({ ...ada, email: `user${i}@example.com` })
+        .expect(201);
+    }
+
+    await request(server)
+      .post('/auth/register')
+      .send({ ...ada, email: 'one-too-many@example.com' })
+      .expect(429);
+    expect(users.users.size).toBe(TEST_RATE_LIMIT);
+    await request(server).post('/auth/refresh').expect(401);
+    await request(server).get('/health').expect(200);
+  });
+
+  it('still allows sign-in when the rate limiter backend is down', async () => {
+    rateLimiter.failWith = new Error('redis unavailable');
+
+    await request(app.getHttpServer()).post('/auth/register').send(ada).expect(201);
   });
 
   it('refuses a refresh token used as an access token', async () => {

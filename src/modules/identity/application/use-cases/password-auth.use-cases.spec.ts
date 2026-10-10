@@ -9,6 +9,7 @@ import {
   UserNotFoundException,
 } from '../../domain/exceptions/identity.exceptions.js';
 import { GetCurrentUserUseCase } from './get-current-user.use-case.js';
+import { LogoutUseCase } from './logout.use-case.js';
 import { LoginWithPasswordUseCase } from './login-with-password.use-case.js';
 import { RefreshSessionUseCase } from './refresh-session.use-case.js';
 import { RegisterUserUseCase } from './register-user.use-case.js';
@@ -31,7 +32,7 @@ describe('RegisterUserUseCase', () => {
     expect(stored?.emailVerifiedAt).toBeNull();
     expect(session.user.status).toBe(UserStatus.PENDING_ONBOARDING);
     expect(session.accessToken).toBe(`access:${stored?.id}`);
-    expect(session.refreshToken).toBe(`refresh:${stored?.id}`);
+    expect(session.refreshToken).toBe(`refresh:${stored?.id}:token-1`);
   });
 
   it('rejects an email that is already registered, ignoring case', async () => {
@@ -115,38 +116,83 @@ describe('LoginWithPasswordUseCase', () => {
 });
 
 describe('RefreshSessionUseCase', () => {
-  it('issues a new token pair with the current memberships', async () => {
-    const { users, tokens, sessions } = createIdentityFakes();
+  function setup() {
+    const fakes = createIdentityFakes();
+    const useCase = new RefreshSessionUseCase(
+      fakes.users,
+      fakes.tokens,
+      fakes.revocations,
+      fakes.sessions,
+    );
+    return { ...fakes, useCase };
+  }
+
+  it('issues a new access token with the current memberships and keeps the same refresh token', async () => {
+    const { users, useCase } = setup();
     const user = users.seed();
-    const useCase = new RefreshSessionUseCase(users, tokens, sessions);
     const membership = { id: 'm-2', institutionId: 'inst-1', role: Role.STUDENT };
     users.memberships.set(user.id, [membership]);
+    const refreshToken = `refresh:${user.id}:token-a`;
 
-    const session = await useCase.execute(`refresh:${user.id}`);
+    const session = await useCase.execute(refreshToken);
 
     expect(session.accessToken).toBe(`access:${user.id}`);
+    expect(session.refreshToken).toBe(refreshToken);
     expect(session.user.memberships).toEqual([membership]);
   });
 
   it.each([
     ['a missing token', undefined],
     ['a forged token', 'not-a-refresh-token'],
-    ['a token for a deleted user', 'refresh:missing-user'],
+    ['a token for a deleted user', 'refresh:missing-user:token-a'],
   ])('rejects %s', async (_label, token) => {
-    const { users, tokens, sessions } = createIdentityFakes();
-    const useCase = new RefreshSessionUseCase(users, tokens, sessions);
+    const { useCase } = setup();
 
     await expect(useCase.execute(token)).rejects.toBeInstanceOf(InvalidRefreshTokenException);
   });
 
   it('rejects a user suspended after the token was issued', async () => {
-    const { users, tokens, sessions } = createIdentityFakes();
+    const { users, useCase } = setup();
     const user = users.seed({ status: UserStatus.SUSPENDED });
-    const useCase = new RefreshSessionUseCase(users, tokens, sessions);
 
-    await expect(useCase.execute(`refresh:${user.id}`)).rejects.toBeInstanceOf(
+    await expect(useCase.execute(`refresh:${user.id}:token-a`)).rejects.toBeInstanceOf(
       AccountSuspendedException,
     );
+  });
+
+  it('rejects a token that was revoked by logout, while other sessions keep working', async () => {
+    const { users, tokens, revocations, useCase } = setup();
+    const user = users.seed();
+    const logout = new LogoutUseCase(tokens, revocations);
+    const laptop = `refresh:${user.id}:token-laptop`;
+    const phone = `refresh:${user.id}:token-phone`;
+
+    await logout.execute(laptop);
+
+    await expect(useCase.execute(laptop)).rejects.toBeInstanceOf(InvalidRefreshTokenException);
+    await expect(useCase.execute(phone)).resolves.toMatchObject({ refreshToken: phone });
+  });
+});
+
+describe('LogoutUseCase', () => {
+  it('blocks the token until its own expiry', async () => {
+    const { tokens, revocations } = createIdentityFakes();
+    const useCase = new LogoutUseCase(tokens, revocations);
+
+    await useCase.execute('refresh:user-1:token-a');
+
+    expect(revocations.revoked.get('token-a')?.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it.each([
+    ['no token', undefined],
+    ['an invalid token', 'garbage'],
+  ])('does nothing for %s', async (_label, token) => {
+    const { tokens, revocations } = createIdentityFakes();
+    const useCase = new LogoutUseCase(tokens, revocations);
+
+    await expect(useCase.execute(token)).resolves.toBeUndefined();
+    expect(revocations.revoked.size).toBe(0);
   });
 });
 

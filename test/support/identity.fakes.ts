@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type {
+  RateLimitDecision,
+  RateLimiter,
+} from '../../src/shared/domain/rate-limit/rate-limiter.js';
+import type {
   AuthenticatedUser,
   MembershipClaim,
 } from '../../src/shared/domain/auth/authenticated-user.js';
@@ -15,7 +19,11 @@ import type {
   GoogleOAuthGateway,
 } from '../../src/modules/identity/domain/ports/google-oauth.gateway.js';
 import type { PasswordHasher } from '../../src/modules/identity/domain/ports/password-hasher.js';
-import type { TokenIssuer } from '../../src/modules/identity/domain/ports/token-issuer.js';
+import type { RefreshTokenRevocations } from '../../src/modules/identity/domain/ports/refresh-token-revocations.js';
+import type {
+  RefreshTokenClaims,
+  TokenIssuer,
+} from '../../src/modules/identity/domain/ports/token-issuer.js';
 import type {
   LinkOAuthOptions,
   NewUser,
@@ -136,12 +144,48 @@ export class FakeTokenIssuer implements TokenIssuer {
     return Promise.resolve(`access:${user.userId}`);
   }
 
+  private issued = 0;
+
+  // Token format: refresh:<userId>:<tokenId>
   issueRefreshToken(userId: string): Promise<string> {
-    return Promise.resolve(`refresh:${userId}`);
+    this.issued += 1;
+    return Promise.resolve(`refresh:${userId}:token-${this.issued}`);
   }
 
-  verifyRefreshToken(token: string): Promise<string | null> {
-    return Promise.resolve(token.startsWith('refresh:') ? token.slice('refresh:'.length) : null);
+  verifyRefreshToken(token: string): Promise<RefreshTokenClaims | null> {
+    const [kind, userId, tokenId] = token.split(':');
+    if (kind !== 'refresh' || !userId || !tokenId) {
+      return Promise.resolve(null);
+    }
+    return Promise.resolve({ userId, tokenId, expiresAt: new Date(Date.now() + 60_000) });
+  }
+}
+
+export class InMemoryRefreshTokenRevocations implements RefreshTokenRevocations {
+  readonly revoked = new Map<string, Date>();
+
+  revoke(tokenId: string, expiresAt: Date): Promise<void> {
+    this.revoked.set(tokenId, expiresAt);
+    return Promise.resolve();
+  }
+
+  isRevoked(tokenId: string): Promise<boolean> {
+    return Promise.resolve(this.revoked.has(tokenId));
+  }
+}
+
+/** Counts attempts per key without expiring them, which is enough for a single test. */
+export class InMemoryRateLimiter implements RateLimiter {
+  readonly attempts = new Map<string, number>();
+  failWith: Error | null = null;
+
+  consume(key: string, limit: number, windowSeconds: number): Promise<RateLimitDecision> {
+    if (this.failWith) {
+      return Promise.reject(this.failWith);
+    }
+    const count = (this.attempts.get(key) ?? 0) + 1;
+    this.attempts.set(key, count);
+    return Promise.resolve({ allowed: count <= limit, retryAfterSeconds: windowSeconds });
   }
 }
 
@@ -171,6 +215,7 @@ export function createIdentityFakes() {
   const hasher = new FakePasswordHasher();
   const tokens = new FakeTokenIssuer();
   const google = new FakeGoogleGateway();
+  const revocations = new InMemoryRefreshTokenRevocations();
   const sessions = new SessionIssuer(users, tokens);
-  return { users, hasher, tokens, google, sessions };
+  return { users, hasher, tokens, google, revocations, sessions };
 }

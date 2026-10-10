@@ -4,6 +4,7 @@ export type DomainErrorKind =
   | 'FORBIDDEN'
   | 'NOT_FOUND'
   | 'CONFLICT'
+  | 'RATE_LIMITED'
   | 'UNAVAILABLE'
   | 'INTERNAL';
 

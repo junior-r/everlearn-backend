@@ -9,15 +9,21 @@ import {
   Query,
   Req,
   Res,
+  UseGuards,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { APP_CONFIG, type AppConfig } from '../../../../config/app-config.js';
 import type { AuthenticatedUser } from '../../../../shared/domain/auth/authenticated-user.js';
 import { DomainException } from '../../../../shared/domain/domain.exception.js';
 import { CurrentUser, Public } from '../../../../shared/presentation/decorators/auth.decorators.js';
+import {
+  RateLimit,
+  RateLimitGuard,
+} from '../../../../shared/presentation/guards/rate-limit.guard.js';
 import type { AuthSession, AuthUserView } from '../../application/auth-session.js';
 import { GetCurrentUserUseCase } from '../../application/use-cases/get-current-user.use-case.js';
 import { LoginWithGoogleUseCase } from '../../application/use-cases/login-with-google.use-case.js';
+import { LogoutUseCase } from '../../application/use-cases/logout.use-case.js';
 import { LoginWithPasswordUseCase } from '../../application/use-cases/login-with-password.use-case.js';
 import { RefreshSessionUseCase } from '../../application/use-cases/refresh-session.use-case.js';
 import { RegisterUserUseCase } from '../../application/use-cases/register-user.use-case.js';
@@ -34,6 +40,7 @@ export class AuthController {
     @Inject(RegisterUserUseCase) private readonly registerUser: RegisterUserUseCase,
     @Inject(LoginWithPasswordUseCase) private readonly loginWithPassword: LoginWithPasswordUseCase,
     @Inject(RefreshSessionUseCase) private readonly refreshSession: RefreshSessionUseCase,
+    @Inject(LogoutUseCase) private readonly logoutSession: LogoutUseCase,
     @Inject(StartGoogleLoginUseCase) private readonly startGoogleLogin: StartGoogleLoginUseCase,
     @Inject(LoginWithGoogleUseCase) private readonly loginWithGoogle: LoginWithGoogleUseCase,
     @Inject(GetCurrentUserUseCase) private readonly getCurrentUser: GetCurrentUserUseCase,
@@ -42,6 +49,8 @@ export class AuthController {
   }
 
   @Public()
+  @UseGuards(RateLimitGuard)
+  @RateLimit({ scope: 'auth-register' })
   @Post('register')
   async register(
     @Body() dto: RegisterDto,
@@ -51,6 +60,8 @@ export class AuthController {
   }
 
   @Public()
+  @UseGuards(RateLimitGuard)
+  @RateLimit({ scope: 'auth-login', bodyField: 'email' })
   @Post('login')
   @HttpCode(HttpStatus.OK)
   async login(
@@ -63,19 +74,21 @@ export class AuthController {
   @Public()
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
-  async refresh(
-    @Req() request: Request,
-    @Res({ passthrough: true }) response: Response,
-  ): Promise<AuthResponse> {
+  async refresh(@Req() request: Request): Promise<AuthResponse> {
     const session = await this.refreshSession.execute(this.cookies.readRefreshToken(request));
-    return this.respondWith(session, response);
+    return { accessToken: session.accessToken, user: session.user };
   }
 
   @Public()
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
-  logout(@Res({ passthrough: true }) response: Response): void {
+  async logout(
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<void> {
+    // Clear the cookie first, so the browser is signed out even if revocation fails
     this.cookies.clearRefreshToken(response);
+    await this.logoutSession.execute(this.cookies.readRefreshToken(request));
   }
 
   @Get('me')

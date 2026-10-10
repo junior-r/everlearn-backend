@@ -35,12 +35,17 @@ describe('JwtTokenService', () => {
     await expect(service.verifyAccessToken(token)).resolves.toEqual(user);
   });
 
-  it('round-trips the user id through a refresh token', async () => {
-    const service = tokenService();
+  it('round-trips the user id through a refresh token with a unique id and its expiry', async () => {
+    const service = tokenService({ refreshTtlSeconds: 600 });
 
-    const token = await service.issueRefreshToken('user-1');
+    const first = await service.verifyRefreshToken(await service.issueRefreshToken('user-1'));
+    const second = await service.verifyRefreshToken(await service.issueRefreshToken('user-1'));
 
-    await expect(service.verifyRefreshToken(token)).resolves.toBe('user-1');
+    expect(first?.userId).toBe('user-1');
+    expect(first?.tokenId).not.toBe(second?.tokenId);
+    const secondsLeft = ((first?.expiresAt.getTime() ?? 0) - Date.now()) / 1000;
+    expect(secondsLeft).toBeGreaterThan(590);
+    expect(secondsLeft).toBeLessThanOrEqual(600);
   });
 
   it('never accepts one token kind in place of the other', async () => {

@@ -1,4 +1,5 @@
 import { InvalidRefreshTokenException } from '../../domain/exceptions/identity.exceptions.js';
+import type { RefreshTokenRevocations } from '../../domain/ports/refresh-token-revocations.js';
 import type { TokenIssuer } from '../../domain/ports/token-issuer.js';
 import type { UserRepository } from '../../domain/ports/user.repository.js';
 import type { AuthSession } from '../auth-session.js';
@@ -8,19 +9,22 @@ export class RefreshSessionUseCase {
   constructor(
     private readonly users: UserRepository,
     private readonly tokens: TokenIssuer,
+    private readonly revocations: RefreshTokenRevocations,
     private readonly sessions: SessionIssuer,
   ) {}
 
-  /** Exchanges a refresh token for a new token pair with up-to-date memberships. */
+  /** Exchanges a refresh token for a new access token with up-to-date memberships. */
   async execute(refreshToken: string | undefined): Promise<AuthSession> {
-    if (!refreshToken) {
+    const claims = refreshToken ? await this.tokens.verifyRefreshToken(refreshToken) : null;
+    if (!refreshToken || !claims || (await this.revocations.isRevoked(claims.tokenId))) {
       throw new InvalidRefreshTokenException();
     }
-    const userId = await this.tokens.verifyRefreshToken(refreshToken);
-    const user = userId ? await this.users.findById(userId) : null;
+    const user = await this.users.findById(claims.userId);
     if (!user) {
       throw new InvalidRefreshTokenException();
     }
-    return this.sessions.issueFor(user);
+    const session = await this.sessions.issueFor(user);
+    // Keep the same refresh token, so logging out revokes the one the browser holds
+    return { ...session, refreshToken };
   }
 }

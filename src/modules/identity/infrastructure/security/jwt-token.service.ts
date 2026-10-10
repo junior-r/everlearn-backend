@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { APP_CONFIG, type AppConfig } from '../../../../config/app-config.js';
@@ -6,7 +7,7 @@ import type {
   AuthenticatedUser,
   MembershipClaim,
 } from '../../../../shared/domain/auth/authenticated-user.js';
-import type { TokenIssuer } from '../../domain/ports/token-issuer.js';
+import type { RefreshTokenClaims, TokenIssuer } from '../../domain/ports/token-issuer.js';
 
 const ALGORITHM = 'HS256';
 
@@ -21,6 +22,8 @@ interface AccessTokenPayload {
 interface RefreshTokenPayload {
   sub: string;
   typ: 'refresh';
+  jti: string;
+  exp: number;
 }
 
 /** Signs and verifies both token kinds; each kind has its own secret. */
@@ -47,9 +50,10 @@ export class JwtTokenService implements TokenIssuer, AccessTokenVerifier {
   }
 
   issueRefreshToken(userId: string): Promise<string> {
-    const payload: Omit<RefreshTokenPayload, 'sub'> = { typ: 'refresh' };
+    const payload: Pick<RefreshTokenPayload, 'typ'> = { typ: 'refresh' };
     return this.jwt.signAsync(payload, {
       subject: userId,
+      jwtid: randomUUID(),
       secret: this.config.jwt.refreshSecret,
       expiresIn: this.config.jwt.refreshTtlSeconds,
       algorithm: ALGORITHM,
@@ -76,13 +80,20 @@ export class JwtTokenService implements TokenIssuer, AccessTokenVerifier {
     }
   }
 
-  async verifyRefreshToken(token: string): Promise<string | null> {
+  async verifyRefreshToken(token: string): Promise<RefreshTokenClaims | null> {
     try {
       const payload = await this.jwt.verifyAsync<RefreshTokenPayload>(token, {
         secret: this.config.jwt.refreshSecret,
         algorithms: [ALGORITHM],
       });
-      return payload.typ === 'refresh' ? payload.sub : null;
+      if (payload.typ !== 'refresh' || !payload.jti) {
+        return null;
+      }
+      return {
+        userId: payload.sub,
+        tokenId: payload.jti,
+        expiresAt: new Date(payload.exp * 1000),
+      };
     } catch {
       return null;
     }
