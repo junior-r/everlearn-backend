@@ -21,6 +21,10 @@ export class RolesGuard implements CanActivate {
   constructor(@Inject(Reflector) private readonly reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
+    // Websocket events have no institution header; see JwtAuthGuard
+    if (context.getType() !== 'http') {
+      return true;
+    }
     const targets = [context.getHandler(), context.getClass()];
     const platformAdminOnly = this.reflector.getAllAndOverride<boolean | undefined>(
       PLATFORM_ADMIN_KEY,

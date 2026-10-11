@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { NOTIFIER } from '../../shared/domain/notifications/notifier.js';
 import { useCaseProvider } from '../../shared/infrastructure/nest/use-case.provider.js';
 import { ConfirmOnboardingDataUseCase } from './application/use-cases/confirm-onboarding-data.use-case.js';
 import { GetOnboardingApplicationUseCase } from './application/use-cases/get-onboarding-application.use-case.js';
@@ -43,7 +44,7 @@ import { OnboardingController } from './presentation/controllers/onboarding.cont
       OCR_PROVIDER,
     ]),
     useCaseProvider(ListPendingReviewsUseCase, [ONBOARDING_REPOSITORY]),
-    useCaseProvider(ReviewApplicationUseCase, [ONBOARDING_REPOSITORY]),
+    useCaseProvider(ReviewApplicationUseCase, [ONBOARDING_REPOSITORY, NOTIFIER]),
     useCaseProvider(GetApplicationDocumentUseCase, [ONBOARDING_REPOSITORY, DOCUMENT_STORAGE]),
     {
       // Built by hand because its last constructor argument (the clock) keeps its default

@@ -1,4 +1,5 @@
 import type { MembershipClaim } from '../../../../shared/domain/auth/authenticated-user.js';
+import { NotificationType, type Notifier } from '../../../../shared/domain/notifications/notifier.js';
 import { Role } from '../../../../shared/domain/auth/role.js';
 import {
   CourseNotFoundException,
@@ -26,6 +27,7 @@ import {
   type Standing,
   type SubjectRef,
 } from '../../domain/evaluation.js';
+import { gradebookCsv, type CsvFormat } from '../../domain/gradebook-csv.js';
 import type { EvaluationRepository } from '../../domain/ports/evaluation.ports.js';
 
 /** Who is asking, and in which institution. */
@@ -134,12 +136,37 @@ export class UpdateEvaluationUseCase {
 }
 
 export class PublishEvaluationUseCase {
-  constructor(private readonly evaluations: EvaluationRepository) {}
+  constructor(
+    private readonly evaluations: EvaluationRepository,
+    private readonly notifier: Notifier,
+  ) {}
 
-  /** Makes an evaluation visible to the Students of its course and open to grading. */
+  /**
+   * Makes an evaluation visible to the Students of its course and open to
+   * grading, and tells them. Publishing one already published tells nobody again.
+   */
   async execute(actor: Actor, evaluationId: string): Promise<Evaluation> {
-    await requireOwnEvaluation(this.evaluations, actor, evaluationId);
-    return this.evaluations.publish(evaluationId);
+    const { evaluation: draft } = await requireOwnEvaluation(this.evaluations, actor, evaluationId);
+    const published = await this.evaluations.publish(evaluationId);
+    if (!draft.isPublished) {
+      const { course } = draft;
+      const students = await this.evaluations.listStudents(course.groupId);
+      await this.notifier.notify(
+        students.map((student) => ({
+          recipient: { membershipId: student.membershipId },
+          institutionId: actor.institutionId,
+          type: NotificationType.EVALUATION_PUBLISHED,
+          data: {
+            evaluationId,
+            evaluationTitle: published.title,
+            subjectName: course.subject.name,
+            groupName: course.groupName,
+            dueAt: published.dueAt?.toISOString() ?? null,
+          },
+        })),
+      );
+    }
+    return published;
   }
 }
 
@@ -229,6 +256,39 @@ export class GetGradebookUseCase {
         };
       }),
     };
+  }
+}
+
+export interface GradebookFile {
+  /** A name for the download, without extension: the subject and the group. */
+  name: string;
+  csv: string;
+}
+
+export class ExportGradebookUseCase {
+  constructor(private readonly gradebook: GetGradebookUseCase) {}
+
+  /**
+   * The gradebook of a course as a CSV file: enrolled Students, their score in
+   * each published evaluation, and their average. It reads the gradebook itself,
+   * so only the course's Teacher can export it and the figures are the same.
+   */
+  async execute(actor: Actor, courseRef: CourseRef, format: CsvFormat): Promise<GradebookFile> {
+    const book = await this.gradebook.execute(actor, courseRef);
+    const csv = gradebookCsv(
+      {
+        evaluations: book.evaluations.filter((evaluation) => evaluation.isPublished),
+        students: book.students.map((student) => ({
+          firstName: student.firstName,
+          lastName: student.lastName,
+          average: student.average,
+          gradedWeight: student.gradedWeight,
+          scores: new Map(student.grades.map((grade) => [grade.evaluationId, grade.score])),
+        })),
+      },
+      format,
+    );
+    return { name: `${book.subject.name} ${book.groupName}`, csv };
   }
 }
 

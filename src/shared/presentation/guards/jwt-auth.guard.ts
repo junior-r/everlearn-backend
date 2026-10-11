@@ -29,6 +29,11 @@ export class JwtAuthGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+    // Global guards also run for websocket events, which carry no HTTP request:
+    // the realtime gateway checks the access token itself when a browser connects
+    if (context.getType() !== 'http') {
+      return true;
+    }
     const targets = [context.getHandler(), context.getClass()];
     if (this.reflector.getAllAndOverride<boolean | undefined>(IS_PUBLIC_KEY, targets)) {
       return true;

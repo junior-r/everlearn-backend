@@ -3,6 +3,7 @@ import { useCaseProvider } from '../../shared/infrastructure/nest/use-case.provi
 import {
   CreateEvaluationUseCase,
   DeleteEvaluationUseCase,
+  ExportGradebookUseCase,
   GetGradebookUseCase,
   GetMyProgressUseCase,
   ListDueEvaluationsUseCase,
@@ -10,6 +11,7 @@ import {
   RecordGradesUseCase,
   UpdateEvaluationUseCase,
 } from './application/use-cases/evaluation.use-cases.js';
+import { NOTIFIER } from '../../shared/domain/notifications/notifier.js';
 import { EVALUATION_REPOSITORY } from './domain/ports/evaluation.ports.js';
 import { PrismaEvaluationRepository } from './infrastructure/prisma-evaluation.repository.js';
 import { EvaluationsController } from './presentation/evaluations.controller.js';
@@ -21,10 +23,11 @@ import { EvaluationsController } from './presentation/evaluations.controller.js'
     { provide: EVALUATION_REPOSITORY, useClass: PrismaEvaluationRepository },
     useCaseProvider(CreateEvaluationUseCase, [EVALUATION_REPOSITORY]),
     useCaseProvider(UpdateEvaluationUseCase, [EVALUATION_REPOSITORY]),
-    useCaseProvider(PublishEvaluationUseCase, [EVALUATION_REPOSITORY]),
+    useCaseProvider(PublishEvaluationUseCase, [EVALUATION_REPOSITORY, NOTIFIER]),
     useCaseProvider(DeleteEvaluationUseCase, [EVALUATION_REPOSITORY]),
     useCaseProvider(RecordGradesUseCase, [EVALUATION_REPOSITORY]),
     useCaseProvider(GetGradebookUseCase, [EVALUATION_REPOSITORY]),
+    useCaseProvider(ExportGradebookUseCase, [GetGradebookUseCase]),
     useCaseProvider(GetMyProgressUseCase, [EVALUATION_REPOSITORY]),
     useCaseProvider(ListDueEvaluationsUseCase, [EVALUATION_REPOSITORY]),
   ],

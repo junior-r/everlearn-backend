@@ -39,6 +39,21 @@ export interface AppConfig {
   ai: AiConfig;
   /** How long the platform and institution dashboards keep their figures. 0 counts them on every request. */
   analyticsCacheSeconds: number;
+  reminders: RemindersConfig;
+  messaging: MessagingConfig;
+}
+
+export interface RemindersConfig {
+  /** Whether this server runs the reminder job. On by default outside tests. */
+  enabled: boolean;
+  /** When the job runs, as a cron expression. */
+  cron: string;
+}
+
+export interface MessagingConfig {
+  /** Direct messages one member may send per window. */
+  maxMessages: number;
+  windowSeconds: number;
 }
 
 export interface OpenAIConfig {
@@ -202,5 +217,13 @@ export function loadAppConfig(env: Env): AppConfig {
     internalServiceSecret: env.INTERNAL_SERVICE_SECRET || null,
     ai: aiConfig(env),
     analyticsCacheSeconds: nonNegativeInt(env, 'ANALYTICS_CACHE_SECONDS', 30),
+    reminders: {
+      enabled: (env.REMINDERS_ENABLED ?? '').trim() === '' ? env.NODE_ENV !== 'test' : flag(env, 'REMINDERS_ENABLED'),
+      cron: env.REMINDERS_CRON?.trim() || '*/5 * * * *',
+    },
+    messaging: {
+      maxMessages: positiveInt(env, 'MESSAGES_MAX_PER_WINDOW', 30),
+      windowSeconds: positiveInt(env, 'MESSAGES_WINDOW_SECONDS', 60),
+    },
   };
 }

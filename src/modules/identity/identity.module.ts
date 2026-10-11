@@ -90,5 +90,7 @@ import { MembersController } from './presentation/controllers/members.controller
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
   ],
+  // The realtime gateway accepts connections with the same access token as the HTTP guard
+  exports: [ACCESS_TOKEN_VERIFIER],
 })
 export class IdentityModule {}

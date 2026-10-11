@@ -18,15 +18,17 @@ import { RolesGuard } from './roles.guard.js';
 
 type Metadata = Partial<Record<string, unknown>>;
 
-function contextFor(request: Partial<AuthenticatedRequest>, metadata: Metadata) {
+function contextFor(request: Partial<AuthenticatedRequest>, metadata: Metadata, type: 'http' | 'ws' = 'http') {
   const handler = () => undefined;
   for (const [key, value] of Object.entries(metadata)) {
     Reflect.defineMetadata(key, value, handler);
   }
   const context = {
+    getType: () => type,
     getHandler: () => handler,
     getClass: () => class {},
-    switchToHttp: () => ({ getRequest: () => request }),
+    // A websocket event has no HTTP request to hand over
+    switchToHttp: () => ({ getRequest: () => (type === 'http' ? request : undefined) }),
   } as unknown as ExecutionContext;
   return context;
 }
@@ -69,6 +71,11 @@ describe('JwtAuthGuard', () => {
     const context = contextFor({ headers: {} }, { [IS_PUBLIC_KEY]: true });
 
     await expect(guard.canActivate(context)).resolves.toBe(true);
+  });
+
+  it('leaves websocket events to the gateway, which checks the token when a browser connects', async () => {
+    await expect(guard.canActivate(contextFor({}, {}, 'ws'))).resolves.toBe(true);
+    expect(new RolesGuard(new Reflector()).canActivate(contextFor({}, { [ROLES_KEY]: [Role.ADMIN] }, 'ws'))).toBe(true);
   });
 
   describe('with a temporary-password token', () => {

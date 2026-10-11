@@ -12,6 +12,12 @@ import {
   type LLMProvider,
 } from '../../src/modules/ai/domain/ports/assistant.ports.js';
 import { DASHBOARD_CACHE, DASHBOARD_QUERIES } from '../../src/modules/analytics/domain/ports/analytics.ports.js';
+import { MESSAGE_REPOSITORY } from '../../src/modules/messaging/domain/ports/messaging.ports.js';
+import {
+  EMAIL_PROVIDER,
+  NOTIFICATION_REPOSITORY,
+  REMINDER_QUERIES,
+} from '../../src/modules/notifications/domain/ports/notification.ports.js';
 import { MockLLMProvider } from '../../src/modules/ai/infrastructure/mock-llm.provider.js';
 import {
   PENSUM_REPOSITORY,
@@ -53,6 +59,12 @@ import { createAdminFakes } from './admin.fakes.js';
 import { InMemoryTeachingRecords } from './ai.fakes.js';
 import { InMemoryDashboardCache, InMemoryDashboardQueries } from './analytics.fakes.js';
 import { FakeVideoTokenIssuer, InMemoryClassroomRepository } from './classroom.fakes.js';
+import {
+  InMemoryMessageRepository,
+  InMemoryNotificationRepository,
+  InMemoryReminderQueries,
+  RecordingEmailProvider,
+} from './communication.fakes.js';
 import { InMemoryEvaluationRepository } from './evaluation.fakes.js';
 import {
   InMemoryGroupRepository,
@@ -131,6 +143,28 @@ export async function createTestApp(extraControllers: Type[] = [], options: Test
 
   const groups = new InMemoryGroupRepository(admin.pensums, periods, directory);
 
+  // Stand in for the joins the Prisma adapters do on memberships and users
+  const notifications = new InMemoryNotificationRepository();
+  notifications.lookupUser = (membershipId) =>
+    members.members.find((member) => member.membershipId === membershipId)?.userId;
+  notifications.lookupAddressee = (userId) => {
+    const user = users.users.get(userId);
+    return user && { email: user.email, firstName: user.firstName };
+  };
+  const messages = new InMemoryMessageRepository();
+  messages.lookupMembers = (institutionId) => {
+    const contacts = new Map<string, { userId: string; firstName: string; lastName: string; roles: Role[] }>();
+    for (const member of members.members) {
+      const user = users.users.get(member.userId);
+      if (member.institutionId === institutionId && member.isActive && user?.isActive()) {
+        const contact = contacts.get(user.id) ?? { userId: user.id, firstName: user.firstName, lastName: user.lastName, roles: [] };
+        contact.roles.push(member.role);
+        contacts.set(user.id, contact);
+      }
+    }
+    return [...contacts.values()];
+  };
+
   const fakes = {
     users,
     members,
@@ -144,6 +178,10 @@ export async function createTestApp(extraControllers: Type[] = [], options: Test
     evaluations: new InMemoryEvaluationRepository(groups, directory),
     teaching: new InMemoryTeachingRecords(),
     dashboards: new InMemoryDashboardQueries(),
+    notifications,
+    emails: new RecordingEmailProvider(),
+    reminders: new InMemoryReminderQueries(),
+    messages,
     google: new FakeGoogleGateway(),
     revocations: new InMemoryRefreshTokenRevocations(),
     rateLimiter: new InMemoryRateLimiter(),
@@ -163,6 +201,8 @@ export async function createTestApp(extraControllers: Type[] = [], options: Test
         FRONTEND_URL: TEST_FRONTEND_URL,
         RATE_LIMIT_AUTH_MAX_ATTEMPTS: String(TEST_RATE_LIMIT),
         INTERNAL_SERVICE_SECRET: TEST_INTERNAL_SECRET,
+        // The job is run by hand in the tests that are about it
+        REMINDERS_ENABLED: 'false',
       }),
     )
     .overrideProvider(PrismaService)
@@ -215,6 +255,14 @@ export async function createTestApp(extraControllers: Type[] = [], options: Test
     .useValue(fakes.evaluations)
     .overrideProvider(TEACHING_RECORDS)
     .useValue(fakes.teaching)
+    .overrideProvider(NOTIFICATION_REPOSITORY)
+    .useValue(fakes.notifications)
+    .overrideProvider(EMAIL_PROVIDER)
+    .useValue(fakes.emails)
+    .overrideProvider(REMINDER_QUERIES)
+    .useValue(fakes.reminders)
+    .overrideProvider(MESSAGE_REPOSITORY)
+    .useValue(fakes.messages)
     .overrideProvider(DASHBOARD_QUERIES)
     .useValue(fakes.dashboards)
     .overrideProvider(DASHBOARD_CACHE)

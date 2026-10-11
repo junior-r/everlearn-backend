@@ -4,6 +4,7 @@ import {
   ArrayNotEmpty,
   IsDate,
   IsEnum,
+  IsIn,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -121,4 +122,11 @@ export class CalendarQueryDto {
   @Type(() => Date)
   @IsDate()
   to?: Date;
+}
+
+export class ExportQueryDto {
+  // The language of the file's headings and number format; Spanish when left out
+  @IsOptional()
+  @IsIn(['es', 'en'])
+  lang?: 'es' | 'en';
 }

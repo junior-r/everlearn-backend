@@ -122,6 +122,8 @@ model Institution {
   updatedAt DateTime @updatedAt
 
   memberships            Membership[]
+  notifications          Notification[]
+  directMessages         DirectMessage[]
   periods                AcademicPeriod[]
   pensums                Pensum[]
   subjects               Subject[]
@@ -150,6 +152,9 @@ model User {
   profile                Profile?
   memberships            Membership[]
   onboardingApplications OnboardingApplication[]
+  notifications          Notification[]
+  messagesSent           DirectMessage[]         @relation("MessagesSent")
+  messagesReceived       DirectMessage[]         @relation("MessagesReceived")
 }
 
 model OAuthAccount {
@@ -576,4 +581,54 @@ model AttendanceRecord {
 
   @@unique([sessionId, enrollmentId])
   @@index([enrollmentId])
+}
+
+enum NotificationType {
+  WELCOME
+  EVALUATION_PUBLISHED
+  EVALUATION_DUE
+  CLASS_STARTING
+  DIRECT_MESSAGE
+}
+
+model Notification {
+  id            String           @id @default(uuid(7)) @db.Uuid
+  userId        String           @db.Uuid
+  // Null for a notice that belongs to no institution in particular
+  institutionId String?          @db.Uuid
+  type          NotificationType
+  // What the client needs to word the notice in its own language
+  data          Json
+  read          Boolean          @default(false)
+  // A reminder carries one, so it reaches a user once however often the job runs
+  dedupeKey     String?
+  // Notices that pile up (messages of one sender) carry one: a single unread at a time
+  collapseKey   String?
+  createdAt     DateTime         @default(now())
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  institution Institution? @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, dedupeKey])
+  @@index([userId, read, createdAt])
+  @@index([userId, collapseKey])
+}
+
+model DirectMessage {
+  id            String    @id @default(uuid(7)) @db.Uuid
+  institutionId String    @db.Uuid
+  senderId      String    @db.Uuid
+  recipientId   String    @db.Uuid
+  body          String
+  // Null until the recipient opens the conversation
+  readAt        DateTime?
+  createdAt     DateTime  @default(now())
+
+  institution Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  sender      User        @relation("MessagesSent", fields: [senderId], references: [id], onDelete: Cascade)
+  recipient   User        @relation("MessagesReceived", fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@index([institutionId, senderId, recipientId, createdAt])
+  @@index([institutionId, recipientId, senderId, createdAt])
+  @@index([recipientId, readAt])
 }

@@ -1,3 +1,4 @@
+import { RecordingNotifier } from '../../../../../test/support/communication.fakes.js';
 import {
   createOnboardingFakes,
   INSTITUTION_ID,
@@ -52,13 +53,15 @@ const confirmation = {
 function setup() {
   const fakes = createOnboardingFakes();
   fakes.applications.enrollments.set(USER_ID, STUDENT_ENROLLMENT);
+  const notifier = new RecordingNotifier();
   return {
     ...fakes,
+    notifier,
     submit: new SubmitIdentityDocumentUseCase(fakes.applications, fakes.storage, fakes.ocr),
     confirm: new ConfirmOnboardingDataUseCase(fakes.applications, () => TODAY),
     get: new GetOnboardingApplicationUseCase(fakes.applications),
     listPending: new ListPendingReviewsUseCase(fakes.applications),
-    review: new ReviewApplicationUseCase(fakes.applications),
+    review: new ReviewApplicationUseCase(fakes.applications, notifier),
     getDocument: new GetApplicationDocumentUseCase(fakes.applications, fakes.storage),
   };
 }
@@ -417,6 +420,48 @@ describe('review pipeline', () => {
     await expect(getDocument.execute(noPhoto.id, INSTITUTION_ID)).rejects.toBeInstanceOf(
       ApplicationNotFoundException,
     );
+  });
+});
+
+describe('welcoming an approved member', () => {
+  async function awaitingReview() {
+    const context = setup();
+    await context.submit.execute(jpegUpload);
+    const { id } = await context.confirm.execute(confirmation);
+    return { ...context, applicationId: id };
+  }
+  const decision = (applicationId: string, institutionId: string) => ({
+    applicationId,
+    institutionId,
+    reviewerMembershipId: 'reviewer',
+    decision: ReviewDecision.APPROVE,
+  });
+
+  it('welcomes the applicant, in the institution that approved them', async () => {
+    const { review, notifier, applications, applicationId } = await awaitingReview();
+    const institutionId = applications.rows[0].institutionId ?? '';
+
+    await review.execute(decision(applicationId, institutionId));
+
+    expect(notifier.requests).toEqual([
+      { recipient: { userId: USER_ID }, institutionId, type: 'WELCOME', data: {} },
+    ]);
+  });
+
+  it('welcomes nobody on a rejection, nor when the review is refused', async () => {
+    const { review, notifier, applications, applicationId } = await awaitingReview();
+    const institutionId = applications.rows[0].institutionId ?? '';
+
+    await review.execute({
+      ...decision(applicationId, institutionId),
+      decision: ReviewDecision.REJECT,
+      reason: 'La foto está borrosa',
+    });
+    await expect(review.execute(decision(applicationId, 'another-institution'))).rejects.toBeInstanceOf(
+      ApplicationNotFoundException,
+    );
+
+    expect(notifier.requests).toEqual([]);
   });
 });
 

@@ -12,7 +12,9 @@ import {
   Post,
   Put,
   Query,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import type { AuthenticatedUser } from '../../../shared/domain/auth/authenticated-user.js';
 import { Role } from '../../../shared/domain/auth/role.js';
 import {
@@ -23,6 +25,7 @@ import {
 import {
   CreateEvaluationUseCase,
   DeleteEvaluationUseCase,
+  ExportGradebookUseCase,
   GetGradebookUseCase,
   GetMyProgressUseCase,
   ListDueEvaluationsUseCase,
@@ -35,9 +38,11 @@ import {
   type Gradebook,
 } from '../application/use-cases/evaluation.use-cases.js';
 import type { Evaluation } from '../domain/evaluation.js';
+import type { CsvFormat } from '../domain/gradebook-csv.js';
 import {
   CalendarQueryDto,
   CreateEvaluationDto,
+  ExportQueryDto,
   RecordGradesDto,
   UpdateEvaluationDto,
 } from './evaluation.dtos.js';
@@ -47,6 +52,7 @@ import {
 export class EvaluationsController {
   constructor(
     @Inject(GetGradebookUseCase) private readonly getGradebook: GetGradebookUseCase,
+    @Inject(ExportGradebookUseCase) private readonly exportGradebook: ExportGradebookUseCase,
     @Inject(CreateEvaluationUseCase) private readonly createEvaluation: CreateEvaluationUseCase,
     @Inject(UpdateEvaluationUseCase) private readonly updateEvaluation: UpdateEvaluationUseCase,
     @Inject(PublishEvaluationUseCase) private readonly publishEvaluation: PublishEvaluationUseCase,
@@ -65,6 +71,34 @@ export class EvaluationsController {
     @Param('subjectId', ParseUUIDPipe) subjectId: string,
   ): Promise<Gradebook> {
     return this.getGradebook.execute(actor(institutionId, user), { groupId, subjectId });
+  }
+
+  /** The gradebook as a CSV file, worded and formatted for the language asked for. */
+  @Get('groups/:groupId/courses/:subjectId/gradebook/export')
+  @Roles(Role.TEACHER)
+  async export(
+    @CurrentInstitutionId() institutionId: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('groupId', ParseUUIDPipe) groupId: string,
+    @Param('subjectId', ParseUUIDPipe) subjectId: string,
+    @Query() query: ExportQueryDto,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<string> {
+    const file = await this.exportGradebook.execute(
+      actor(institutionId, user),
+      { groupId, subjectId },
+      CSV_FORMATS[query.lang ?? 'es'],
+    );
+    // An ASCII fallback, and the real name for browsers that read RFC 5987
+    const ascii = file.name.normalize('NFD').replace(/[^\w -]/g, '').trim() || 'gradebook';
+    // Set only now: a refusal above must go out as an ordinary JSON error, not as a file
+    response.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    response.setHeader('Cache-Control', 'no-store');
+    response.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${ascii}.csv"; filename*=UTF-8''${encodeURIComponent(file.name)}.csv`,
+    );
+    return file.csv;
   }
 
   @Post('groups/:groupId/courses/:subjectId/evaluations')
@@ -157,6 +191,32 @@ export class EvaluationsController {
     return this.listDue.execute(actor(institutionId, user), query.from ?? new Date(), query.to ?? null);
   }
 }
+
+/** Spanish spreadsheets write decimals with a comma, so their cells are separated by semicolons. */
+const CSV_FORMATS: Record<'es' | 'en', CsvFormat> = {
+  es: {
+    separator: ';',
+    decimal: ',',
+    labels: {
+      lastName: 'Apellidos',
+      firstName: 'Nombres',
+      average: 'Promedio (%)',
+      gradedWeight: 'Evaluado (% de la materia)',
+      evaluation: (title, weight, maxScore) => `${title} (${weight}%, sobre ${maxScore})`,
+    },
+  },
+  en: {
+    separator: ',',
+    decimal: '.',
+    labels: {
+      lastName: 'Last name',
+      firstName: 'First name',
+      average: 'Average (%)',
+      gradedWeight: 'Graded (% of the subject)',
+      evaluation: (title, weight, maxScore) => `${title} (${weight}%, out of ${maxScore})`,
+    },
+  },
+};
 
 function actor(institutionId: string, user: AuthenticatedUser): Actor {
   return { institutionId, memberships: user.memberships };

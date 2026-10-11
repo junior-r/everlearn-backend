@@ -1,3 +1,4 @@
+import { NotificationType, type Notifier } from '../../../../shared/domain/notifications/notifier.js';
 import type { DocumentImage } from '../../domain/document-image.js';
 import type { OnboardingApplication } from '../../domain/entities/onboarding-application.entity.js';
 import { ApplicationNotFoundException } from '../../domain/exceptions/onboarding.exceptions.js';
@@ -46,9 +47,12 @@ export interface ReviewApplicationInput {
 }
 
 export class ReviewApplicationUseCase {
-  constructor(private readonly applications: OnboardingRepository) {}
+  constructor(
+    private readonly applications: OnboardingRepository,
+    private readonly notifier: Notifier,
+  ) {}
 
-  /** Approving activates the member; rejecting sends them back to retake their ID photo. */
+  /** Approving activates the member and welcomes them; rejecting sends them back to retake their ID photo. */
   async execute(input: ReviewApplicationInput): Promise<OnboardingApplicationView> {
     const application = await findInInstitution(
       this.applications,
@@ -61,6 +65,16 @@ export class ReviewApplicationUseCase {
       application.reject(input.reason);
     }
     await this.applications.completeReview(application, input.reviewerMembershipId);
+    if (input.decision === ReviewDecision.APPROVE) {
+      await this.notifier.notify([
+        {
+          recipient: { userId: application.userId },
+          institutionId: input.institutionId,
+          type: NotificationType.WELCOME,
+          data: {},
+        },
+      ]);
+    }
     return toApplicationView(application);
   }
 }

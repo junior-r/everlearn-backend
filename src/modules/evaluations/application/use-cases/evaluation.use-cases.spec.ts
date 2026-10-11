@@ -1,3 +1,4 @@
+import { RecordingNotifier } from '../../../../../test/support/communication.fakes.js';
 import { randomUUID } from 'node:crypto';
 import { createAdminFakes } from '../../../../../test/support/admin.fakes.js';
 import { InMemoryEvaluationRepository } from '../../../../../test/support/evaluation.fakes.js';
@@ -28,6 +29,7 @@ import {
 import {
   CreateEvaluationUseCase,
   DeleteEvaluationUseCase,
+  ExportGradebookUseCase,
   GetGradebookUseCase,
   GetMyProgressUseCase,
   ListDueEvaluationsUseCase,
@@ -86,13 +88,17 @@ function setup() {
     studentIds: [grace.id, linus.id],
   });
   const create = new CreateEvaluationUseCase(repository);
-  const publish = new PublishEvaluationUseCase(repository);
+  const notifier = new RecordingNotifier();
+  const publish = new PublishEvaluationUseCase(repository, notifier);
   const math = { groupId, subjectId: MATH };
   /** A published maths evaluation. */
   const published = async (data: Partial<EvaluationData> = {}) =>
     publish.execute(alan.actor, (await create.execute(alan.actor, math, exam(data))).id);
+  const gradebook = new GetGradebookUseCase(repository);
   return {
     repository,
+    notifier,
+    exportCsv: new ExportGradebookUseCase(gradebook),
     groupId,
     math,
     history: { groupId, subjectId: HISTORY },
@@ -107,7 +113,7 @@ function setup() {
     update: new UpdateEvaluationUseCase(repository),
     remove: new DeleteEvaluationUseCase(repository),
     grade: new RecordGradesUseCase(repository),
-    gradebook: new GetGradebookUseCase(repository),
+    gradebook,
     progress: new GetMyProgressUseCase(repository),
     due: new ListDueEvaluationsUseCase(repository),
   };
@@ -467,5 +473,89 @@ describe('the calendar of due evaluations', () => {
     const ctx = setup();
 
     await expect(ctx.due.execute(ctx.grace.actor, day(10), day(5))).rejects.toBeInstanceOf(InvalidEvaluationException);
+  });
+});
+
+describe('announcing a published evaluation', () => {
+  it('tells every enrolled Student, and nobody else', async () => {
+    const ctx = setup();
+    const draft = await ctx.create.execute(ctx.alan.actor, ctx.math, exam({ title: 'Examen parcial' }));
+    expect(ctx.notifier.requests).toEqual([]);
+
+    await ctx.publish.execute(ctx.alan.actor, draft.id);
+
+    expect(ctx.notifier.requests.map((request) => request.recipient)).toEqual([
+      { membershipId: ctx.grace.id },
+      { membershipId: ctx.linus.id },
+    ]);
+    expect(ctx.notifier.requests[0]).toMatchObject({
+      institutionId: A,
+      type: 'EVALUATION_PUBLISHED',
+      data: { evaluationId: draft.id, evaluationTitle: 'Examen parcial', groupName: '1ro A', dueAt: day(10).toISOString() },
+    });
+  });
+
+  it('tells nobody again when an evaluation already published is published once more', async () => {
+    const ctx = setup();
+    const { id } = await ctx.published();
+    const told = ctx.notifier.requests.length;
+
+    await ctx.publish.execute(ctx.alan.actor, id);
+
+    expect(ctx.notifier.requests).toHaveLength(told);
+  });
+
+  it('tells nobody when publishing is refused', async () => {
+    const ctx = setup();
+    const { id } = await ctx.create.execute(ctx.alan.actor, ctx.math, exam());
+
+    await expect(ctx.publish.execute(ctx.emmy.actor, id)).rejects.toBeInstanceOf(NotCourseTeacherException);
+
+    expect(ctx.notifier.requests).toEqual([]);
+  });
+});
+
+describe('exporting the gradebook', () => {
+  const format = {
+    separator: ';' as const,
+    decimal: ',' as const,
+    labels: {
+      lastName: 'Apellidos',
+      firstName: 'Nombres',
+      average: 'Promedio',
+      gradedWeight: 'Evaluado',
+      evaluation: (title: string, weight: string, maxScore: string) => `${title} ${weight}/${maxScore}`,
+    },
+  };
+
+  it('writes the enrolled Students with their scores in published evaluations and their average', async () => {
+    const ctx = setup();
+    const { id } = await ctx.published({ title: 'Examen', weight: 60 });
+    await ctx.create.execute(ctx.alan.actor, ctx.math, exam({ title: 'Borrador', weight: 20 }));
+    await ctx.grade.execute(ctx.alan.actor, id, [{ enrollmentId: ctx.grace.id, score: 15.5, feedback: 'Privado' }]);
+
+    const file = await ctx.exportCsv.execute(ctx.alan.actor, ctx.math, format);
+
+    const lines = file.csv.replace('\uFEFF', '').split('\r\n');
+    expect(lines[0]).toBe('Apellidos;Nombres;Examen 60/20;Promedio;Evaluado');
+    expect(lines.slice(1, 3)).toEqual(['Prueba;Grace;15,5;77,5;60', 'Prueba;Linus;;;0']);
+    // Drafts and feedback stay out of the file
+    expect(file.csv).not.toContain('Borrador');
+    expect(file.csv).not.toContain('Privado');
+    expect(file.name).toContain('1ro A');
+  });
+
+  it('is only for the Teacher assigned to the course', async () => {
+    const ctx = setup();
+
+    await expect(ctx.exportCsv.execute(ctx.emmy.actor, ctx.math, format)).rejects.toBeInstanceOf(
+      NotCourseTeacherException,
+    );
+    await expect(ctx.exportCsv.execute(ctx.grace.actor, ctx.math, format)).rejects.toBeInstanceOf(
+      NotCourseTeacherException,
+    );
+    await expect(
+      ctx.exportCsv.execute({ ...ctx.alan.actor, institutionId: B }, ctx.math, format),
+    ).rejects.toBeInstanceOf(CourseNotFoundException);
   });
 });
