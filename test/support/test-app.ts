@@ -5,6 +5,8 @@ import request from 'supertest';
 import type { App } from 'supertest/types.js';
 import { AppModule } from '../../src/app.module.js';
 import { APP_CONFIG, loadAppConfig } from '../../src/config/app-config.js';
+import { LLM_PROVIDER, TEACHING_RECORDS } from '../../src/modules/ai/domain/ports/assistant.ports.js';
+import { MockLLMProvider } from '../../src/modules/ai/infrastructure/mock-llm.provider.js';
 import {
   PENSUM_REPOSITORY,
   SUBJECT_REPOSITORY,
@@ -42,6 +44,7 @@ import { RATE_LIMITER } from '../../src/shared/domain/rate-limit/rate-limiter.js
 import { PrismaService } from '../../src/shared/infrastructure/prisma/prisma.service.js';
 import { REDIS_CLIENT } from '../../src/shared/infrastructure/redis/redis.tokens.js';
 import { createAdminFakes } from './admin.fakes.js';
+import { InMemoryTeachingRecords } from './ai.fakes.js';
 import { FakeVideoTokenIssuer, InMemoryClassroomRepository } from './classroom.fakes.js';
 import { InMemoryEvaluationRepository } from './evaluation.fakes.js';
 import {
@@ -127,6 +130,7 @@ export async function createTestApp(extraControllers: Type[] = []) {
     classroom: new InMemoryClassroomRepository(groups, directory),
     videoTokens: new FakeVideoTokenIssuer(),
     evaluations: new InMemoryEvaluationRepository(groups, directory),
+    teaching: new InMemoryTeachingRecords(),
     google: new FakeGoogleGateway(),
     revocations: new InMemoryRefreshTokenRevocations(),
     rateLimiter: new InMemoryRateLimiter(),
@@ -196,6 +200,11 @@ export async function createTestApp(extraControllers: Type[] = []) {
     .useValue(fakes.videoTokens)
     .overrideProvider(EVALUATION_REPOSITORY)
     .useValue(fakes.evaluations)
+    .overrideProvider(TEACHING_RECORDS)
+    .useValue(fakes.teaching)
+    // The built-in model, without the pauses that make it look like it is typing
+    .overrideProvider(LLM_PROVIDER)
+    .useValue(new MockLLMProvider(0))
     .compile();
 
   const app: INestApplication<App> = moduleRef.createNestApplication();

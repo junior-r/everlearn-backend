@@ -36,6 +36,17 @@ export interface AppConfig {
   livekit: LiveKitConfig | null;
   /** Shared with our microservices. Null refuses every call to the internal API. */
   internalServiceSecret: string | null;
+  ai: AiConfig;
+}
+
+/** The language models the assistant can run on. Only the built-in mock exists so far. */
+export const LLM_PROVIDERS = ['mock'] as const;
+
+export interface AiConfig {
+  provider: (typeof LLM_PROVIDERS)[number];
+  /** Questions one member may ask the assistant per window. */
+  chatMaxQuestions: number;
+  chatWindowSeconds: number;
 }
 
 export interface LiveKitConfig {
@@ -121,6 +132,14 @@ function liveKitConfig(env: Env): LiveKitConfig | null {
   return { apiKey: env.LIVEKIT_API_KEY, apiSecret: secret(env, 'LIVEKIT_API_SECRET') };
 }
 
+function llmProvider(env: Env): AiConfig['provider'] {
+  const provider = LLM_PROVIDERS.find((name) => name === (env.LLM_PROVIDER || 'mock'));
+  if (!provider) {
+    throw new Error(`LLM_PROVIDER must be one of: ${LLM_PROVIDERS.join(', ')}`);
+  }
+  return provider;
+}
+
 /**
  * Builds the typed configuration from the environment and fails fast on
  * missing or weak values. Google OAuth is optional and null when unset.
@@ -150,5 +169,10 @@ export function loadAppConfig(env: Env): AppConfig {
       : null,
     livekit: liveKitConfig(env),
     internalServiceSecret: env.INTERNAL_SERVICE_SECRET || null,
+    ai: {
+      provider: llmProvider(env),
+      chatMaxQuestions: positiveInt(env, 'AI_CHAT_MAX_QUESTIONS', 20),
+      chatWindowSeconds: positiveInt(env, 'AI_CHAT_WINDOW_SECONDS', 60),
+    },
   };
 }

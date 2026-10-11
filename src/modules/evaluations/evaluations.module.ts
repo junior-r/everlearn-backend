@@ -28,5 +28,7 @@ import { EvaluationsController } from './presentation/evaluations.controller.js'
     useCaseProvider(GetMyProgressUseCase, [EVALUATION_REPOSITORY]),
     useCaseProvider(ListDueEvaluationsUseCase, [EVALUATION_REPOSITORY]),
   ],
+  // The AI assistant reads a Student's studies through the same use case as the Student does
+  exports: [GetMyProgressUseCase],
 })
 export class EvaluationsModule {}
