@@ -1,5 +1,5 @@
 import type { ToolCall, ToolDefinition } from '../assistant.js';
-import type { StudentAttendance } from '../class-standing.js';
+import type { StudentAttendance } from '../../../attendance/domain/attendance-standing.js';
 import type { TaughtCourse, TimeRange } from '../teacher-hours.js';
 
 export const LLM_PROVIDER = Symbol('LLMProvider');

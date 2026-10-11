@@ -11,6 +11,7 @@ import {
   TEACHING_RECORDS,
   type LLMProvider,
 } from '../../src/modules/ai/domain/ports/assistant.ports.js';
+import { DASHBOARD_CACHE, DASHBOARD_QUERIES } from '../../src/modules/analytics/domain/ports/analytics.ports.js';
 import { MockLLMProvider } from '../../src/modules/ai/infrastructure/mock-llm.provider.js';
 import {
   PENSUM_REPOSITORY,
@@ -50,6 +51,7 @@ import { PrismaService } from '../../src/shared/infrastructure/prisma/prisma.ser
 import { REDIS_CLIENT } from '../../src/shared/infrastructure/redis/redis.tokens.js';
 import { createAdminFakes } from './admin.fakes.js';
 import { InMemoryTeachingRecords } from './ai.fakes.js';
+import { InMemoryDashboardCache, InMemoryDashboardQueries } from './analytics.fakes.js';
 import { FakeVideoTokenIssuer, InMemoryClassroomRepository } from './classroom.fakes.js';
 import { InMemoryEvaluationRepository } from './evaluation.fakes.js';
 import {
@@ -141,6 +143,7 @@ export async function createTestApp(extraControllers: Type[] = [], options: Test
     videoTokens: new FakeVideoTokenIssuer(),
     evaluations: new InMemoryEvaluationRepository(groups, directory),
     teaching: new InMemoryTeachingRecords(),
+    dashboards: new InMemoryDashboardQueries(),
     google: new FakeGoogleGateway(),
     revocations: new InMemoryRefreshTokenRevocations(),
     rateLimiter: new InMemoryRateLimiter(),
@@ -212,6 +215,10 @@ export async function createTestApp(extraControllers: Type[] = [], options: Test
     .useValue(fakes.evaluations)
     .overrideProvider(TEACHING_RECORDS)
     .useValue(fakes.teaching)
+    .overrideProvider(DASHBOARD_QUERIES)
+    .useValue(fakes.dashboards)
+    .overrideProvider(DASHBOARD_CACHE)
+    .useValue(new InMemoryDashboardCache())
     .overrideProvider(LLM_PROVIDER)
     .useValue(options.llm ?? new MockLLMProvider(0))
     .compile();

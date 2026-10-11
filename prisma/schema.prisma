@@ -516,6 +516,8 @@ model OnboardingApplication {
   reviewedBy  Membership?  @relation(fields: [reviewedById], references: [id])
 
   @@index([institutionId, status])
+  // The Platform Admin's count of reviews pending in every institution
+  @@index([status])
   @@index([userId])
 }
 

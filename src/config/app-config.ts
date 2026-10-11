@@ -37,6 +37,8 @@ export interface AppConfig {
   /** Shared with our microservices. Null refuses every call to the internal API. */
   internalServiceSecret: string | null;
   ai: AiConfig;
+  /** How long the platform and institution dashboards keep their figures. 0 counts them on every request. */
+  analyticsCacheSeconds: number;
 }
 
 export interface OpenAIConfig {
@@ -97,6 +99,18 @@ function positiveInt(env: Env, key: string, fallback: number): number {
   const value = Number(raw);
   if (!Number.isInteger(value) || value <= 0) {
     throw new Error(`${key} must be a positive integer`);
+  }
+  return value;
+}
+
+function nonNegativeInt(env: Env, key: string, fallback: number): number {
+  const raw = env[key];
+  if (!raw) {
+    return fallback;
+  }
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`${key} must be a whole number, 0 or more`);
   }
   return value;
 }
@@ -187,5 +201,6 @@ export function loadAppConfig(env: Env): AppConfig {
     livekit: liveKitConfig(env),
     internalServiceSecret: env.INTERNAL_SERVICE_SECRET || null,
     ai: aiConfig(env),
+    analyticsCacheSeconds: nonNegativeInt(env, 'ANALYTICS_CACHE_SECONDS', 30),
   };
 }

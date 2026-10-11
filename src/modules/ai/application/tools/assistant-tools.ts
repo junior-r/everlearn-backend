@@ -6,7 +6,8 @@ import {
   type ToolDefinition,
   type ToolResult,
 } from '../../domain/assistant.js';
-import { attendanceRisk, ATTENDANCE_RISK_BELOW, classAverage } from '../../domain/class-standing.js';
+import { attendanceRisk, ATTENDANCE_RISK_BELOW } from '../../../attendance/domain/attendance-standing.js';
+import { classAverage } from '../../domain/class-standing.js';
 import type {
   AcademicRecords,
   CourseGrades,
