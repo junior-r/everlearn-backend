@@ -8,6 +8,7 @@ import {
   conversationKey,
   InvalidMessageException,
   MAX_MESSAGE_LENGTH,
+  MessageNotAllowedException,
   MessagesTooFastException,
   MIN_SEARCH_LENGTH,
   type Contact,
@@ -15,6 +16,7 @@ import {
   type DirectMessage,
   type MessagingActor,
 } from '../../domain/direct-message.js';
+import { reachOf } from '../../domain/messaging-reach.js';
 import type { MessageRepository } from '../../domain/ports/messaging.ports.js';
 
 export interface MessageLimits {
@@ -36,19 +38,33 @@ async function requirePair(messages: MessageRepository, actor: MessagingActor, p
   if (!self || !peer) {
     throw new ContactNotFoundException();
   }
-  return { self, peer };
+  const { institutionId, userId } = actor;
+  // Either the member may start this conversation, or the other person could and did: a
+  // Student may answer the office that wrote to them, but may not be the one to begin
+  const canWrite =
+    (await messages.canReach(institutionId, userId, reachOf(self.roles), peerId)) ||
+    ((await messages.canReach(institutionId, peerId, reachOf(peer.roles), userId)) &&
+      (await messages.hasWritten(institutionId, peerId, userId)));
+  return { self, peer, canWrite };
 }
 
 export class SearchContactsUseCase {
   constructor(private readonly messages: MessageRepository) {}
 
-  /** Members of the institution to start a conversation with, by name. A query too short finds nobody. */
+  /** The members the actor may start a conversation with, by name. A query too short finds nobody. */
   async execute(actor: MessagingActor, query: string): Promise<Contact[]> {
     const text = query.trim();
-    if (text.length < MIN_SEARCH_LENGTH || !(await this.messages.findContact(actor.institutionId, actor.userId))) {
+    const self = text.length >= MIN_SEARCH_LENGTH ? await this.messages.findContact(actor.institutionId, actor.userId) : null;
+    if (!self) {
       return [];
     }
-    return this.messages.searchContacts(actor.institutionId, actor.userId, text, CONTACT_SEARCH_LIMIT);
+    return this.messages.searchContacts(
+      actor.institutionId,
+      actor.userId,
+      reachOf(self.roles),
+      text,
+      CONTACT_SEARCH_LIMIT,
+    );
   }
 }
 
@@ -64,6 +80,8 @@ export class ListConversationsUseCase {
 export interface Conversation {
   peer: Contact;
   messages: DirectMessage[];
+  /** False for a conversation that can still be read but no longer continued. */
+  canWrite: boolean;
 }
 
 export class OpenConversationUseCase {
@@ -74,7 +92,7 @@ export class OpenConversationUseCase {
 
   /** A conversation's latest messages. Opening it reads what the peer sent, and clears the notice about it. */
   async execute(actor: MessagingActor, peerId: string, before: Date | null = null): Promise<Conversation> {
-    const { peer } = await requirePair(this.messages, actor, peerId);
+    const { peer, canWrite } = await requirePair(this.messages, actor, peerId);
     const messages = await this.messages.conversation(
       actor.institutionId,
       actor.userId,
@@ -82,9 +100,13 @@ export class OpenConversationUseCase {
       CONVERSATION_PAGE_SIZE,
       before,
     );
+    // Someone out of reach, with nothing ever said between them, is not to be found at all
+    if (!canWrite && messages.length === 0) {
+      throw new ContactNotFoundException();
+    }
     await this.messages.markRead(actor.institutionId, actor.userId, peerId);
     await this.notifier.dismiss(actor.userId, conversationKey(actor.institutionId, peerId));
-    return { peer, messages };
+    return { peer, messages, canWrite };
   }
 }
 
@@ -98,7 +120,8 @@ export class SendDirectMessageUseCase {
   ) {}
 
   /**
-   * Sends a message to another member of the same institution. It reaches the
+   * Sends a message to a member of the same institution the sender is allowed
+   * to write to (see `reachOf`). It reaches the
    * browsers both have open at once; a recipient who is not looking at the
    * conversation gets a notice, and an email too if they are not connected at all.
    */
@@ -107,7 +130,13 @@ export class SendDirectMessageUseCase {
     if (!body || body.length > MAX_MESSAGE_LENGTH) {
       throw new InvalidMessageException();
     }
-    const { self } = await requirePair(this.messages, actor, recipientId);
+    const { self, canWrite } = await requirePair(this.messages, actor, recipientId);
+    if (!canWrite) {
+      const { institutionId, userId } = actor;
+      const [earlier] = await this.messages.conversation(institutionId, userId, recipientId, 1, null);
+      // They know each other if they have talked before; otherwise the person does not exist for them
+      throw earlier ? new MessageNotAllowedException() : new ContactNotFoundException();
+    }
     await this.countMessage(actor);
     const message = await this.messages.save({
       institutionId: actor.institutionId,
@@ -118,7 +147,7 @@ export class SendDirectMessageUseCase {
     this.realtime.publish(recipientId, RealtimeEvent.MESSAGE, message);
     // The sender's other tabs and devices show it too
     this.realtime.publish(actor.userId, RealtimeEvent.MESSAGE, message);
-    if (!this.realtime.isViewing(recipientId, conversationKey(actor.institutionId, actor.userId))) {
+    if (!(await this.realtime.isViewing(recipientId, conversationKey(actor.institutionId, actor.userId)))) {
       await this.notifier.notify([
         {
           recipient: { userId: recipientId },
@@ -127,7 +156,7 @@ export class SendDirectMessageUseCase {
           data: { senderId: actor.userId, senderName: `${self.firstName} ${self.lastName}` },
           // One unread notice per sender, however many messages they write
           collapseKey: conversationKey(actor.institutionId, actor.userId),
-          email: !this.realtime.isOnline(recipientId),
+          email: !(await this.realtime.isOnline(recipientId)),
         },
       ]);
     }

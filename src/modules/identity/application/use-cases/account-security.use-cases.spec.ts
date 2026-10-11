@@ -1,4 +1,9 @@
-import { createIdentityFakes } from '../../../../../test/support/identity.fakes.js';
+import { RecordingEmailProvider } from '../../../../../test/support/communication.fakes.js';
+import {
+  createIdentityFakes,
+  InMemoryPasswordResetTokens,
+  TEST_PASSWORD,
+} from '../../../../../test/support/identity.fakes.js';
 import { Role } from '../../../../shared/domain/auth/role.js';
 import { UserStatus } from '../../domain/entities/user.entity.js';
 import {
@@ -8,6 +13,8 @@ import {
   GoogleEmailNotVerifiedException,
   InvalidCurrentPasswordException,
   InvalidOAuthStateException,
+  InvalidRefreshTokenException,
+  InvalidResetTokenException,
   PasswordUnchangedException,
 } from '../../domain/exceptions/identity.exceptions.js';
 import {
@@ -18,6 +25,8 @@ import {
 import { LoginWithGoogleUseCase } from './login-with-google.use-case.js';
 import { LoginWithPasswordUseCase } from './login-with-password.use-case.js';
 import { RegisterMemberUseCase } from './member.use-cases.js';
+import { RequestPasswordResetUseCase, ResetPasswordUseCase } from './password-reset.use-cases.js';
+import { RefreshSessionUseCase } from './refresh-session.use-case.js';
 import { StartGoogleLoginUseCase } from './start-google-login.use-case.js';
 
 function setup() {
@@ -219,5 +228,148 @@ describe('LoginWithGoogleUseCase', () => {
 
     await expect(googleLogin.execute(input)).rejects.toBeInstanceOf(InvalidOAuthStateException);
     expect(google.exchangedCodes).toHaveLength(0);
+  });
+});
+
+describe('password reset', () => {
+  const FRONTEND = 'https://app.everlearn.test';
+
+  function resetSetup() {
+    const fakes = createIdentityFakes();
+    const resetTokens = new InMemoryPasswordResetTokens();
+    const emails = new RecordingEmailProvider();
+    const pending: Array<Promise<void>> = [];
+    const failures: unknown[] = [];
+    const user = fakes.users.seed({ email: 'grace@example.com', firstName: 'Grace', status: UserStatus.ACTIVE });
+    return {
+      ...fakes,
+      resetTokens,
+      emails,
+      failures,
+      user,
+      /** Waits for the email the request leaves to finish on its own. */
+      settle: () => Promise.all(pending),
+      request: new RequestPasswordResetUseCase(fakes.users, resetTokens, emails, {
+        frontendUrl: FRONTEND,
+        defer: (work) => pending.push(work),
+        onFailure: (error) => failures.push(error),
+      }),
+      reset: new ResetPasswordUseCase(
+        fakes.users,
+        resetTokens,
+        fakes.hasher,
+        fakes.revocations,
+        () => new Date('2026-10-11T12:00:00Z'),
+      ),
+      login: new LoginWithPasswordUseCase(fakes.users, fakes.hasher, fakes.sessions),
+      refresh: new RefreshSessionUseCase(fakes.users, fakes.tokens, fakes.revocations, fakes.sessions),
+    };
+  }
+
+  it('emails a link that works for 15 minutes, with the token after the hash sign', async () => {
+    const ctx = resetSetup();
+
+    await ctx.request.execute('  Grace@Example.com ', 'en');
+    await ctx.settle();
+
+    expect(ctx.resetTokens.issued).toEqual([{ token: 'reset-token-1', userId: ctx.user.id, ttlSeconds: 900 }]);
+    expect(ctx.emails.sent).toHaveLength(1);
+    expect(ctx.emails.sent[0]).toMatchObject({ to: 'grace@example.com', subject: 'Restablece tu contraseña de Everlearn' });
+    expect(ctx.emails.sent[0].text).toContain(`${FRONTEND}/en/reset-password#token=reset-token-1`);
+    expect(ctx.emails.sent[0].text).toContain('vence en 15 minutos');
+  });
+
+  it('answers the same way for an address nobody has, and for a suspended account, and sends nothing', async () => {
+    const ctx = resetSetup();
+    ctx.users.seed({ email: 'out@example.com', status: UserStatus.SUSPENDED });
+
+    await expect(ctx.request.execute('nobody@example.com')).resolves.toBeUndefined();
+    await expect(ctx.request.execute('out@example.com')).resolves.toBeUndefined();
+    await ctx.settle();
+
+    expect(ctx.resetTokens.issued).toEqual([]);
+    expect(ctx.emails.sent).toEqual([]);
+  });
+
+  it('does not wait for the email, and stays quiet when it cannot be sent', async () => {
+    const ctx = resetSetup();
+    ctx.emails.refused.add('grace@example.com');
+
+    // Resolved before the email has been attempted: the answer cannot depend on it
+    await expect(ctx.request.execute('grace@example.com')).resolves.toBeUndefined();
+    await ctx.settle();
+
+    expect(ctx.failures).toHaveLength(1);
+    const down = resetSetup();
+    down.resetTokens.failWith = new Error('redis down');
+    await expect(down.request.execute('grace@example.com')).resolves.toBeUndefined();
+    await down.settle();
+    expect(down.emails.sent).toEqual([]);
+    expect(down.failures).toHaveLength(1);
+  });
+
+  it('sets the new password, once', async () => {
+    const ctx = resetSetup();
+    await ctx.request.execute('grace@example.com');
+    await ctx.settle();
+
+    await ctx.reset.execute('reset-token-1', 'a-brand-new-password');
+
+    await expect(ctx.login.execute({ email: 'grace@example.com', password: 'a-brand-new-password' })).resolves.toBeDefined();
+    await expect(ctx.login.execute({ email: 'grace@example.com', password: TEST_PASSWORD })).rejects.toThrow();
+    // The link is spent
+    await expect(ctx.reset.execute('reset-token-1', 'yet-another-password')).rejects.toBeInstanceOf(
+      InvalidResetTokenException,
+    );
+  });
+
+  it('refuses a token that is unknown, expired, or replaced by a newer one', async () => {
+    const ctx = resetSetup();
+    await ctx.request.execute('grace@example.com');
+    await ctx.request.execute('grace@example.com');
+    await ctx.settle();
+
+    await expect(ctx.reset.execute('made-up', 'a-brand-new-password')).rejects.toBeInstanceOf(InvalidResetTokenException);
+    // Asking again made the first link stop working
+    await expect(ctx.reset.execute('reset-token-1', 'a-brand-new-password')).rejects.toBeInstanceOf(
+      InvalidResetTokenException,
+    );
+    ctx.resetTokens.expire('reset-token-2');
+    await expect(ctx.reset.execute('reset-token-2', 'a-brand-new-password')).rejects.toBeInstanceOf(
+      InvalidResetTokenException,
+    );
+    await expect(ctx.login.execute({ email: 'grace@example.com', password: TEST_PASSWORD })).resolves.toBeDefined();
+  });
+
+  it('ends a forced password change, and does not reopen an account suspended meanwhile', async () => {
+    const ctx = resetSetup();
+    ctx.users.patch(ctx.user.id, { mustChangePassword: true });
+    await ctx.request.execute('grace@example.com');
+    await ctx.settle();
+    await ctx.reset.execute('reset-token-1', 'a-brand-new-password');
+    expect(ctx.users.users.get(ctx.user.id)?.mustChangePassword).toBe(false);
+
+    await ctx.request.execute('grace@example.com');
+    await ctx.settle();
+    ctx.users.patch(ctx.user.id, { status: UserStatus.SUSPENDED });
+    await expect(ctx.reset.execute('reset-token-2', 'one-more-password')).rejects.toBeInstanceOf(
+      InvalidResetTokenException,
+    );
+  });
+
+  it('closes the sessions opened before the reset, and leaves later ones alone', async () => {
+    const ctx = resetSetup();
+    ctx.tokens.now = () => new Date('2026-10-11T11:00:00Z');
+    const before = await ctx.login.execute({ email: 'grace@example.com', password: TEST_PASSWORD });
+    await expect(ctx.refresh.execute(before.refreshToken)).resolves.toBeDefined();
+    await ctx.request.execute('grace@example.com');
+    await ctx.settle();
+
+    await ctx.reset.execute('reset-token-1', 'a-brand-new-password');
+
+    await expect(ctx.refresh.execute(before.refreshToken)).rejects.toBeInstanceOf(InvalidRefreshTokenException);
+    ctx.tokens.now = () => new Date('2026-10-11T12:00:05Z');
+    const after = await ctx.login.execute({ email: 'grace@example.com', password: 'a-brand-new-password' });
+    await expect(ctx.refresh.execute(after.refreshToken)).resolves.toBeDefined();
   });
 });

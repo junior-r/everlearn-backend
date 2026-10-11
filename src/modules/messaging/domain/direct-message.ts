@@ -48,6 +48,12 @@ export class ContactNotFoundException extends DomainException {
   }
 }
 
+export class MessageNotAllowedException extends DomainException {
+  constructor() {
+    super('FORBIDDEN', 'MESSAGE_NOT_ALLOWED', 'You can no longer write to this person');
+  }
+}
+
 export class InvalidMessageException extends DomainException {
   constructor() {
     super('VALIDATION', 'INVALID_MESSAGE', `A message has between 1 and ${MAX_MESSAGE_LENGTH} characters`);

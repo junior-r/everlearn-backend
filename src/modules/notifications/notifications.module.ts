@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { Global, Logger, Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
+import { APP_CONFIG, type AppConfig } from '../../config/app-config.js';
+import { EMAIL_PROVIDER, type EmailProvider } from '../../shared/domain/email/email-provider.js';
 import { useCaseProvider } from '../../shared/infrastructure/nest/use-case.provider.js';
 import { NOTIFIER, type Notifier } from '../../shared/domain/notifications/notifier.js';
 import { REALTIME, type Realtime } from '../../shared/domain/realtime/realtime.js';
@@ -11,15 +13,14 @@ import {
   SendRemindersUseCase,
 } from './application/use-cases/notification.use-cases.js';
 import {
-  EMAIL_PROVIDER,
   NOTIFICATION_REPOSITORY,
   REMINDER_QUERIES,
-  type EmailProvider,
   type NotificationRepository,
 } from './domain/ports/notification.ports.js';
 import { MockEmailProvider } from './infrastructure/mock-email.provider.js';
 import { PrismaNotificationRepository } from './infrastructure/prisma-notification.repository.js';
 import { PrismaReminderQueries } from './infrastructure/prisma-reminder-queries.js';
+import { ResendEmailProvider, resendSend } from './infrastructure/resend-email.provider.js';
 import { ReminderScheduler } from './infrastructure/reminder.scheduler.js';
 import { NotificationsController } from './presentation/notifications.controller.js';
 
@@ -28,8 +29,9 @@ const describe = (error: unknown) => (error instanceof Error ? error.message : S
 
 /**
  * Composition root of notices and reminders. Global, so any module can announce
- * something through `NOTIFIER` without importing this one. A real email service
- * plugs in as another adapter of `EmailProvider`.
+ * something through `NOTIFIER`, or send an email through `EMAIL_PROVIDER`, without
+ * importing this one. Emails go through Resend when `USE_REAL_EMAIL` is on and
+ * configured, and to the log otherwise.
  */
 @Global()
 @Module({
@@ -38,7 +40,20 @@ const describe = (error: unknown) => (error instanceof Error ? error.message : S
   providers: [
     { provide: NOTIFICATION_REPOSITORY, useClass: PrismaNotificationRepository },
     { provide: REMINDER_QUERIES, useClass: PrismaReminderQueries },
-    { provide: EMAIL_PROVIDER, useFactory: (): EmailProvider => new MockEmailProvider() },
+    {
+      provide: EMAIL_PROVIDER,
+      useFactory: (config: AppConfig): EmailProvider => {
+        const { resend, realEmailWithoutKey, logBodies } = config.email;
+        if (resend) {
+          return new ResendEmailProvider(resendSend(resend.apiKey), resend.from);
+        }
+        if (realEmailWithoutKey) {
+          logger.warn('USE_REAL_EMAIL is on but RESEND_API_KEY or EMAIL_FROM is missing: emails are only logged');
+        }
+        return new MockEmailProvider(logBodies);
+      },
+      inject: [APP_CONFIG],
+    },
     {
       provide: SendNotificationsUseCase,
       useFactory: (notifications: NotificationRepository, emails: EmailProvider, realtime: Realtime) =>
@@ -67,6 +82,6 @@ const describe = (error: unknown) => (error instanceof Error ? error.message : S
     useCaseProvider(SendRemindersUseCase, [REMINDER_QUERIES, SendNotificationsUseCase]),
     ReminderScheduler,
   ],
-  exports: [NOTIFIER],
+  exports: [NOTIFIER, EMAIL_PROVIDER],
 })
 export class NotificationsModule {}

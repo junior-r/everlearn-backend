@@ -14,10 +14,11 @@ import {
 import { DASHBOARD_CACHE, DASHBOARD_QUERIES } from '../../src/modules/analytics/domain/ports/analytics.ports.js';
 import { MESSAGE_REPOSITORY } from '../../src/modules/messaging/domain/ports/messaging.ports.js';
 import {
-  EMAIL_PROVIDER,
   NOTIFICATION_REPOSITORY,
   REMINDER_QUERIES,
 } from '../../src/modules/notifications/domain/ports/notification.ports.js';
+import { PASSWORD_RESET_TOKENS } from '../../src/modules/identity/domain/ports/password-reset-tokens.js';
+import { EMAIL_PROVIDER } from '../../src/shared/domain/email/email-provider.js';
 import { MockLLMProvider } from '../../src/modules/ai/infrastructure/mock-llm.provider.js';
 import {
   PENSUM_REPOSITORY,
@@ -76,6 +77,7 @@ import {
   FakeGoogleGateway,
   FakePasswordHasher,
   InMemoryMemberRepository,
+  InMemoryPasswordResetTokens,
   InMemoryRateLimiter,
   InMemoryRefreshTokenRevocations,
   InMemoryUserRepository,
@@ -164,6 +166,15 @@ export async function createTestApp(extraControllers: Type[] = [], options: Test
     }
     return [...contacts.values()];
   };
+  const userOf = (membershipId: string) =>
+    members.members.find((member) => member.membershipId === membershipId)?.userId ?? membershipId;
+  messages.lookupGroups = (institutionId) =>
+    groups.rows
+      .filter((group) => group.institutionId === institutionId)
+      .map((group) => ({
+        teacherUserIds: [...group.teachers.values()].map(userOf),
+        studentUserIds: group.studentIds.map(userOf),
+      }));
 
   const fakes = {
     users,
@@ -184,6 +195,7 @@ export async function createTestApp(extraControllers: Type[] = [], options: Test
     messages,
     google: new FakeGoogleGateway(),
     revocations: new InMemoryRefreshTokenRevocations(),
+    resetTokens: new InMemoryPasswordResetTokens(),
     rateLimiter: new InMemoryRateLimiter(),
     ...onboarding,
     ...admin,
@@ -221,6 +233,8 @@ export async function createTestApp(extraControllers: Type[] = [], options: Test
     .useValue(fakes.google)
     .overrideProvider(REFRESH_TOKEN_REVOCATIONS)
     .useValue(fakes.revocations)
+    .overrideProvider(PASSWORD_RESET_TOKENS)
+    .useValue(fakes.resetTokens)
     .overrideProvider(ONBOARDING_REPOSITORY)
     .useValue(fakes.applications)
     .overrideProvider(DOCUMENT_STORAGE)

@@ -11,10 +11,12 @@ import {
   CONVERSATION_PAGE_SIZE,
   InvalidMessageException,
   MAX_MESSAGE_LENGTH,
+  MessageNotAllowedException,
   MessagesTooFastException,
   type Contact,
   type MessagingActor,
 } from '../../domain/direct-message.js';
+import { reachOf } from '../../domain/messaging-reach.js';
 import {
   ListConversationsUseCase,
   OpenConversationUseCase,
@@ -34,7 +36,11 @@ const actor = (userId: string, institutionId = A): MessagingActor => ({ userId, 
 const grace = actor('grace');
 const alan = actor('alan');
 
-/** Institution A: Grace and Linus (Students), Alan (Teacher). Institution B: Emmy, and Alan again. */
+/**
+ * Institution A: Alan teaches 1ro A, where Grace and Linus are enrolled; Tim teaches 2do B, where Ada
+ * is. Rosa is the Institution Admin, Sam is Staff, Gina a Guardian.
+ * Institution B: Emmy teaches a group Alan is enrolled in as a Student.
+ */
 function setup(limits = { maxMessages: 30, windowSeconds: 60 }) {
   const messages = new InMemoryMessageRepository();
   const realtime = new FakeRealtime();
@@ -45,7 +51,19 @@ function setup(limits = { maxMessages: 30, windowSeconds: 60 }) {
     contact('linus', 'Linus', 'Pauling', Role.STUDENT),
     contact('alan', 'Alan', 'Turing', Role.TEACHER),
   ]);
+  messages.members.get(A)?.push(
+    contact('tim', 'Tim', 'Berners', Role.TEACHER),
+    contact('ada', 'Ada', 'Lovelace', Role.STUDENT),
+    contact('rosa', 'Rosa', 'Franklin', Role.ADMIN),
+    contact('sam', 'Sam', 'Morse', Role.STAFF),
+    contact('gina', 'Gina', 'Rometty', Role.GUARDIAN),
+  );
+  messages.groups.set(A, [
+    { teacherUserIds: ['alan'], studentUserIds: ['grace', 'linus'] },
+    { teacherUserIds: ['tim'], studentUserIds: ['ada'] },
+  ]);
   messages.members.set(B, [contact('emmy', 'Emmy', 'Noether', Role.TEACHER), contact('alan', 'Alan', 'Turing', Role.STUDENT)]);
+  messages.groups.set(B, [{ teacherUserIds: ['emmy'], studentUserIds: ['alan'] }]);
   return {
     messages,
     realtime,
@@ -243,5 +261,147 @@ describe('reading conversations', () => {
     expect((await ctx.list.execute(alan))[0].unread).toBe(0);
     // In B, Alan has no conversations
     expect(await ctx.list.execute(actor('alan', B))).toEqual([]);
+  });
+});
+
+describe('who may write to whom', () => {
+  const found = async (ctx: ReturnType<typeof setup>, who: MessagingActor, query: string) =>
+    (await ctx.search.execute(who, query)).map((person) => person.userId).sort();
+  const NAMES = ['grace', 'linus', 'alan', 'tim', 'ada', 'rosa', 'sam', 'gina'];
+  /** Everyone of institution A the actor can find, looked up one name at a time. */
+  const everyone = async (ctx: ReturnType<typeof setup>, who: MessagingActor) =>
+    (await Promise.all(NAMES.map((name) => found(ctx, who, name)))).flat().sort();
+
+  it('derives the reach of each role, and adds them up for someone who holds several', () => {
+    expect(reachOf([Role.ADMIN]).anyone).toBe(true);
+    expect(reachOf([Role.STAFF]).anyone).toBe(true);
+    expect(reachOf([Role.COORDINATOR]).anyone).toBe(true);
+    expect(reachOf([Role.STUDENT])).toEqual({
+      anyone: false,
+      roles: [],
+      ownStudents: false,
+      ownTeachers: true,
+      groupMates: true,
+    });
+    expect(reachOf([Role.TEACHER])).toEqual({
+      anyone: false,
+      roles: [Role.TEACHER, Role.ADMIN, Role.COORDINATOR, Role.STAFF],
+      ownStudents: true,
+      ownTeachers: false,
+      groupMates: false,
+    });
+    expect(reachOf([Role.GUARDIAN]).roles).toEqual([Role.ADMIN, Role.COORDINATOR, Role.STAFF]);
+    expect(reachOf([Role.TEACHER, Role.STUDENT])).toMatchObject({ ownStudents: true, ownTeachers: true, groupMates: true });
+    expect(reachOf([])).toEqual({ anyone: false, roles: [], ownStudents: false, ownTeachers: false, groupMates: false });
+  });
+
+  it('lets a Student find only their own Teachers and the Students of their groups', async () => {
+    const ctx = setup();
+
+    expect(await everyone(ctx, grace)).toEqual(['alan', 'linus']);
+    expect(await found(ctx, grace, 'tim')).toEqual([]);
+    expect(await found(ctx, grace, 'ada')).toEqual([]);
+    expect(await found(ctx, grace, 'rosa')).toEqual([]);
+    expect(await found(ctx, grace, 'gina')).toEqual([]);
+  });
+
+  it('lets a Teacher find their own Students, other Teachers and the office, but no other Students or Guardians', async () => {
+    const ctx = setup();
+
+    expect(await everyone(ctx, alan)).toEqual(['grace', 'linus', 'rosa', 'sam', 'tim']);
+    expect(await found(ctx, alan, 'ada')).toEqual([]);
+    expect(await found(ctx, alan, 'gina')).toEqual([]);
+  });
+
+  it('lets the office find anyone, and a Guardian only the office', async () => {
+    const ctx = setup();
+
+    expect(await everyone(ctx, actor('rosa'))).toEqual(['ada', 'alan', 'gina', 'grace', 'linus', 'sam', 'tim']);
+    expect(await everyone(ctx, actor('sam'))).toContain('grace');
+    expect(await everyone(ctx, actor('gina'))).toEqual(['rosa', 'sam']);
+  });
+
+  it('refuses a message to someone out of reach as if they did not exist', async () => {
+    const ctx = setup();
+
+    for (const [who, to] of [
+      [grace, 'tim'],
+      [grace, 'ada'],
+      [grace, 'rosa'],
+      [grace, 'sam'],
+      [alan, 'ada'],
+      [alan, 'gina'],
+      [actor('gina'), 'alan'],
+      [actor('gina'), 'grace'],
+    ] as const) {
+      await expect(ctx.send.execute(who, to, 'Hola'), `${who.userId} → ${to}`).rejects.toBeInstanceOf(
+        ContactNotFoundException,
+      );
+      await expect(ctx.open.execute(who, to), `${who.userId} opens ${to}`).rejects.toBeInstanceOf(
+        ContactNotFoundException,
+      );
+    }
+    expect(ctx.messages.messages).toEqual([]);
+  });
+
+  it('delivers within reach in both directions', async () => {
+    const ctx = setup();
+
+    for (const [who, to] of [
+      [grace, 'alan'],
+      [grace, 'linus'],
+      [alan, 'grace'],
+      [alan, 'tim'],
+      [alan, 'rosa'],
+      [actor('rosa'), 'ada'],
+      [actor('sam'), 'gina'],
+      [actor('gina'), 'sam'],
+    ] as const) {
+      await expect(ctx.send.execute(who, to, 'Hola'), `${who.userId} → ${to}`).resolves.toBeDefined();
+    }
+  });
+
+  it('lets a Student answer the office that wrote to them, but never write first', async () => {
+    const ctx = setup();
+    await expect(ctx.send.execute(grace, 'rosa', 'Hola')).rejects.toBeInstanceOf(ContactNotFoundException);
+
+    await ctx.send.execute(actor('rosa'), 'grace', 'Pasa por la oficina, por favor.');
+
+    const opened = await ctx.open.execute(grace, 'rosa');
+    expect(opened.canWrite).toBe(true);
+    await expect(ctx.send.execute(grace, 'rosa', 'Voy enseguida.')).resolves.toBeDefined();
+    // Being written to by one member of the office opens no door to the others
+    await expect(ctx.send.execute(grace, 'sam', 'Hola')).rejects.toBeInstanceOf(ContactNotFoundException);
+    // And a Student cannot use a Teacher who is not theirs the same way
+    await expect(ctx.send.execute(actor('ada'), 'alan', 'Hola')).rejects.toBeInstanceOf(ContactNotFoundException);
+  });
+
+  it('keeps a conversation readable, but closed, once the two are no longer within reach', async () => {
+    const ctx = setup();
+    await ctx.send.execute(grace, 'linus', '¿Hiciste la tarea?');
+    // Linus leaves the group
+    ctx.messages.groups.set(A, [
+      { teacherUserIds: ['alan'], studentUserIds: ['grace'] },
+      { teacherUserIds: ['tim'], studentUserIds: ['ada', 'linus'] },
+    ]);
+
+    const opened = await ctx.open.execute(grace, 'linus');
+
+    expect(opened.canWrite).toBe(false);
+    expect(opened.messages.map((message) => message.body)).toEqual(['¿Hiciste la tarea?']);
+    await expect(ctx.send.execute(grace, 'linus', '¿Sigues ahí?')).rejects.toBeInstanceOf(MessageNotAllowedException);
+    await expect(ctx.send.execute(actor('linus'), 'grace', 'Sí')).rejects.toBeInstanceOf(MessageNotAllowedException);
+    expect(await found(ctx, grace, 'linus')).toEqual([]);
+    expect(ctx.messages.messages).toHaveLength(1);
+  });
+
+  it('applies the rule of each institution to the role held there', async () => {
+    const ctx = setup();
+
+    // In B Alan is a Student of Emmy's: he reaches her, and nobody else there
+    expect(await found(ctx, actor('alan', B), 'emmy')).toEqual(['emmy']);
+    await expect(ctx.send.execute(actor('alan', B), 'emmy', 'Hola')).resolves.toBeDefined();
+    // His being a Teacher in A gives him nothing in B, and Emmy is no colleague of his in A
+    await expect(ctx.send.execute(alan, 'emmy', 'Hola')).rejects.toBeInstanceOf(ContactNotFoundException);
   });
 });

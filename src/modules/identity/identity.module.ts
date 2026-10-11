@@ -1,6 +1,8 @@
-import { Module } from '@nestjs/common';
+import { Logger, Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { JwtModule } from '@nestjs/jwt';
+import { APP_CONFIG, type AppConfig } from '../../config/app-config.js';
+import { EMAIL_PROVIDER, type EmailProvider } from '../../shared/domain/email/email-provider.js';
 import { ACCESS_TOKEN_VERIFIER } from '../../shared/domain/auth/access-token-verifier.js';
 import { useCaseProvider } from '../../shared/infrastructure/nest/use-case.provider.js';
 import { JwtAuthGuard } from '../../shared/presentation/guards/jwt-auth.guard.js';
@@ -11,6 +13,10 @@ import {
   CompleteGoogleLinkUseCase,
   StartGoogleLinkUseCase,
 } from './application/use-cases/account-security.use-cases.js';
+import {
+  RequestPasswordResetUseCase,
+  ResetPasswordUseCase,
+} from './application/use-cases/password-reset.use-cases.js';
 import { EnsurePlatformAdminUseCase } from './application/use-cases/ensure-platform-admin.use-case.js';
 import { GetCurrentUserUseCase } from './application/use-cases/get-current-user.use-case.js';
 import { LoginWithGoogleUseCase } from './application/use-cases/login-with-google.use-case.js';
@@ -28,7 +34,8 @@ import {
   type MemberRepository,
 } from './domain/ports/member.repository.js';
 import { PASSWORD_HASHER, type PasswordHasher } from './domain/ports/password-hasher.js';
-import { REFRESH_TOKEN_REVOCATIONS } from './domain/ports/refresh-token-revocations.js';
+import { PASSWORD_RESET_TOKENS, type PasswordResetTokens } from './domain/ports/password-reset-tokens.js';
+import { REFRESH_TOKEN_REVOCATIONS, type RefreshTokenRevocations } from './domain/ports/refresh-token-revocations.js';
 import { TOKEN_ISSUER } from './domain/ports/token-issuer.js';
 import { USER_REPOSITORY, type UserRepository } from './domain/ports/user.repository.js';
 import { GoogleAuthLibraryGateway } from './infrastructure/google/google-oauth.gateway.js';
@@ -37,9 +44,12 @@ import { PrismaMemberRepository } from './infrastructure/repositories/prisma-mem
 import { PrismaUserRepository } from './infrastructure/repositories/prisma-user.repository.js';
 import { BcryptPasswordHasher } from './infrastructure/security/bcrypt-password-hasher.js';
 import { JwtTokenService } from './infrastructure/security/jwt-token.service.js';
+import { RedisPasswordResetTokens } from './infrastructure/security/redis-password-reset-tokens.js';
 import { RedisRefreshTokenRevocations } from './infrastructure/security/redis-refresh-token-revocations.js';
 import { AuthController } from './presentation/controllers/auth.controller.js';
 import { MembersController } from './presentation/controllers/members.controller.js';
+
+const resetLogger = new Logger('PasswordReset');
 
 /**
  * Composition root of the identity module: binds each domain port to its
@@ -56,6 +66,27 @@ import { MembersController } from './presentation/controllers/members.controller
     { provide: PASSWORD_HASHER, useClass: BcryptPasswordHasher },
     { provide: GOOGLE_OAUTH_GATEWAY, useClass: GoogleAuthLibraryGateway },
     { provide: REFRESH_TOKEN_REVOCATIONS, useClass: RedisRefreshTokenRevocations },
+    { provide: PASSWORD_RESET_TOKENS, useClass: RedisPasswordResetTokens },
+    {
+      provide: RequestPasswordResetUseCase,
+      useFactory: (users: UserRepository, tokens: PasswordResetTokens, emails: EmailProvider, config: AppConfig) =>
+        new RequestPasswordResetUseCase(users, tokens, emails, {
+          frontendUrl: config.frontendUrl.replace(/\/+$/, ''),
+          onFailure: (error) =>
+            resetLogger.error(`Reset email not sent: ${error instanceof Error ? error.message : String(error)}`),
+        }),
+      inject: [USER_REPOSITORY, PASSWORD_RESET_TOKENS, EMAIL_PROVIDER, APP_CONFIG],
+    },
+    {
+      provide: ResetPasswordUseCase,
+      useFactory: (
+        users: UserRepository,
+        tokens: PasswordResetTokens,
+        hasher: PasswordHasher,
+        revocations: RefreshTokenRevocations,
+      ) => new ResetPasswordUseCase(users, tokens, hasher, revocations),
+      inject: [USER_REPOSITORY, PASSWORD_RESET_TOKENS, PASSWORD_HASHER, REFRESH_TOKEN_REVOCATIONS],
+    },
     { provide: TOKEN_ISSUER, useExisting: JwtTokenService },
     { provide: ACCESS_TOKEN_VERIFIER, useExisting: JwtTokenService },
     useCaseProvider(SessionIssuer, [USER_REPOSITORY, TOKEN_ISSUER]),

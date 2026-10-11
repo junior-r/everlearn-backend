@@ -1,3 +1,4 @@
+import type { Email } from '../../../shared/domain/email/email-provider.js';
 import {
   NotificationType,
   type NotificationData,
@@ -29,12 +30,6 @@ export interface NewNotification {
   data: NotificationData;
   dedupeKey?: string;
   collapseKey?: string;
-}
-
-export interface Email {
-  to: string;
-  subject: string;
-  text: string;
 }
 
 const text = (data: NotificationData, key: string) => {

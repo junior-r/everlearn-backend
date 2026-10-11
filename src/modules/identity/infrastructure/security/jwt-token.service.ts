@@ -30,6 +30,7 @@ interface RefreshTokenPayload {
   sub: string;
   typ: 'refresh';
   jti: string;
+  iat: number;
   exp: number;
 }
 
@@ -109,6 +110,7 @@ export class JwtTokenService implements TokenIssuer, AccessTokenVerifier {
     return {
       userId: payload.sub,
       tokenId: payload.jti,
+      issuedAt: new Date(payload.iat * 1000),
       expiresAt: new Date(payload.exp * 1000),
     };
   }

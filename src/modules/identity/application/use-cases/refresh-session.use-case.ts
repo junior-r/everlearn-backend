@@ -19,6 +19,10 @@ export class RefreshSessionUseCase {
     if (!refreshToken || !claims || (await this.revocations.isRevoked(claims.tokenId))) {
       throw new InvalidRefreshTokenException();
     }
+    // Sessions opened before a password reset ended with it
+    if (await this.revocations.isRevokedFor(claims.userId, claims.issuedAt)) {
+      throw new InvalidRefreshTokenException();
+    }
     const user = await this.users.findById(claims.userId);
     if (!user) {
       throw new InvalidRefreshTokenException();

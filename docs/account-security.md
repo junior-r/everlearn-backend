@@ -28,3 +28,16 @@ A new member chooses their own password before anything else opens. Google sign-
 - Changing the password does not end the user's other sessions.
 - No password reset for a forgotten password, and no way to unlink Google.
 - An account whose password was removed cannot set a new one from settings.
+
+## Password reset
+
+- **The Need:** a member who forgot their password had no way back in without an admin.
+- **The Goal:** `POST /auth/forgot-password` emails a link; `POST /auth/reset-password` sets a new password with it. Both are public and rate limited like sign-in.
+- **The Reason:**
+  - **The answer never says whether an account exists.** `forgot-password` always returns 204, and the token and the email are produced after the response is on its way, so timing says nothing either. A suspended account gets no email.
+  - **The token is random, single-use and short-lived.** 32 random bytes, valid 15 minutes, stored in Redis as a hash (reading Redis does not hand out working links), read and deleted in one step so it cannot be spent twice. Asking again cancels the previous link.
+  - **The token travels after `#`** (`/es/reset-password#token=…`): that part of an address is never sent to a server, so it stays out of access logs and referrers.
+  - **A reset closes every session.** Refresh tokens issued before the reset are refused (`RefreshTokenRevocations.revokeAllFor`): whoever asks for a reset may be locking someone else out.
+  - **Fails closed.** Without Redis no token is issued or accepted.
+- **The Implementation:** `RequestPasswordResetUseCase`, `ResetPasswordUseCase` (`identity/application/use-cases/password-reset.use-cases.ts`), the `PasswordResetTokens` port with `RedisPasswordResetTokens`, the shared `EmailProvider`. A reset also ends a forced password change. `forgot-password` accepts `locale` (`es` | `en`) for the screen the link opens; the email itself is in Spanish.
+- **Known gaps:** an access token already issued stays valid until it expires (15 minutes at most); a session opened in the same second as the reset survives it; nothing tells the member by email that their password was changed.

@@ -31,3 +31,32 @@ describe('the assistant\'s model', () => {
     expect(() => ai({ USE_REAL_AI: 'yes' })).toThrow('USE_REAL_AI must be true or false');
   });
 });
+
+describe('how emails are sent', () => {
+  const email = (env: Record<string, string>) => loadAppConfig({ ...BASE, ...env }).email;
+
+  it('logs them by default, without their text', () => {
+    expect(email({})).toEqual({ resend: null, realEmailWithoutKey: false, logBodies: false });
+    expect(email({ RESEND_API_KEY: 're_test', EMAIL_FROM: 'Everlearn <a@b.co>' }).resend).toBeNull();
+  });
+
+  it('uses Resend when it is switched on with a key and a sender', () => {
+    expect(email({ USE_REAL_EMAIL: 'true', RESEND_API_KEY: ' re_test ', EMAIL_FROM: ' Everlearn <a@b.co> ' })).toMatchObject({
+      resend: { apiKey: 're_test', from: 'Everlearn <a@b.co>' },
+      realEmailWithoutKey: false,
+    });
+  });
+
+  it('falls back to the log, and says so, when the key or the sender is missing', () => {
+    expect(email({ USE_REAL_EMAIL: 'true' })).toMatchObject({ resend: null, realEmailWithoutKey: true });
+    expect(email({ USE_REAL_EMAIL: 'true', RESEND_API_KEY: 're_test' })).toMatchObject({
+      resend: null,
+      realEmailWithoutKey: true,
+    });
+  });
+
+  it('logs the text of emails only when asked to', () => {
+    expect(email({ EMAIL_LOG_BODIES: 'true' }).logBodies).toBe(true);
+    expect(() => email({ EMAIL_LOG_BODIES: 'si' })).toThrow('EMAIL_LOG_BODIES must be true or false');
+  });
+});

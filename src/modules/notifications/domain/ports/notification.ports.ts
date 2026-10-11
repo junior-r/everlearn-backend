@@ -1,8 +1,7 @@
-import type { Email, NewNotification, Notification } from '../notification.js';
+import type { NewNotification, Notification } from '../notification.js';
 import type { LocalClock } from '../reminders.js';
 
 export const NOTIFICATION_REPOSITORY = Symbol('NotificationRepository');
-export const EMAIL_PROVIDER = Symbol('EmailProvider');
 export const REMINDER_QUERIES = Symbol('ReminderQueries');
 
 export interface Addressee {
@@ -25,11 +24,6 @@ export interface NotificationRepository {
   /** Marks the user's own notices as read: the given ones, or all of them when `ids` is null. */
   markRead(userId: string, ids: string[] | null): Promise<void>;
   markCollapsedRead(userId: string, collapseKey: string): Promise<void>;
-}
-
-/** Sends an email. An adapter rejects when it could not hand the message over. */
-export interface EmailProvider {
-  send(email: Email): Promise<void>;
 }
 
 /** A published evaluation about to be due, with the Students who must hand it in. */

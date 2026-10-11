@@ -282,6 +282,45 @@ describe('Notifications, messages and export (HTTP)', () => {
       expect(ctx.messages.messages).toEqual([]);
     });
 
+    it('lets a Student reach only their own Teachers and group mates, and a Teacher their colleagues', async () => {
+      const { alan, grace, linus } = await seedCourse();
+      const emmy = await member(Role.TEACHER, 'Emmy', 'Noether');
+      // Registered without signing in: the suite's sign-in limit is small, and she only has to exist
+      const ada = await ctx.members.register({
+        institutionId,
+        email: 'ada@example.com',
+        firstName: 'Ada',
+        lastName: 'Lovelace',
+        passwordHash: `hashed:${TEMPORARY_PASSWORD}`,
+        role: Role.STUDENT,
+        activate: true,
+      });
+
+      // Emmy teaches Grace nothing, and Ada shares no group with her
+      expect((await as(grace.token).get('/messages/contacts?query=emmy').expect(200)).body).toEqual([]);
+      expect((await as(grace.token).get('/messages/contacts?query=ada').expect(200)).body).toEqual([]);
+      expect((await as(grace.token).get('/messages/contacts?query=linus').expect(200)).body).toHaveLength(1);
+      for (const stranger of [emmy, ada]) {
+        const refused = await as(grace.token)
+          .post(`/messages/conversations/${stranger.userId}`)
+          .send({ body: 'Hola' })
+          .expect(404);
+        expect(refused.body.code).toBe('CONTACT_NOT_FOUND');
+        await as(grace.token).get(`/messages/conversations/${stranger.userId}`).expect(404);
+      }
+      await as(grace.token).post(`/messages/conversations/${linus.userId}`).send({ body: 'Hola' }).expect(201);
+
+      // Teachers reach each other and their own Students, not the Students of others
+      expect((await as(alan.token).get('/messages/contacts?query=emmy').expect(200)).body).toHaveLength(1);
+      await as(alan.token).post(`/messages/conversations/${emmy.userId}`).send({ body: 'Hola' }).expect(201);
+      await as(alan.token).post(`/messages/conversations/${ada.userId}`).send({ body: 'Hola' }).expect(404);
+      await as(emmy.token).post(`/messages/conversations/${grace.userId}`).send({ body: 'Hola' }).expect(404);
+
+      // A conversation that exists says whether it can be continued
+      const opened = await as(grace.token).get(`/messages/conversations/${linus.userId}`).expect(200);
+      expect(opened.body.canWrite).toBe(true);
+    });
+
     it('limits how fast a member may write', async () => {
       const { alan, grace } = await seedCourse();
       for (let sent = 0; sent < 30; sent += 1) {

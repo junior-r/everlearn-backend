@@ -22,6 +22,7 @@ import type {
   NewMembership,
 } from '../../src/modules/identity/domain/ports/member.repository.js';
 import type { PasswordHasher } from '../../src/modules/identity/domain/ports/password-hasher.js';
+import type { PasswordResetTokens } from '../../src/modules/identity/domain/ports/password-reset-tokens.js';
 import type { RefreshTokenRevocations } from '../../src/modules/identity/domain/ports/refresh-token-revocations.js';
 import type {
   GoogleLinkTicket,
@@ -292,6 +293,9 @@ export class FakePasswordHasher implements PasswordHasher {
 
 export class FakeTokenIssuer implements TokenIssuer {
   readonly issuedAccessTokens: AuthenticatedUser[] = [];
+  /** The clock tokens are stamped with; a test moves it to place a token before or after an event. */
+  now: () => Date = () => new Date();
+  private readonly issuedAt = new Map<string, Date>();
   private issued = 0;
 
   issueAccessToken(user: AuthenticatedUser): Promise<string> {
@@ -302,6 +306,7 @@ export class FakeTokenIssuer implements TokenIssuer {
   // Token format: refresh:<userId>:<tokenId>
   issueRefreshToken(userId: string): Promise<string> {
     this.issued += 1;
+    this.issuedAt.set(`token-${this.issued}`, this.now());
     return Promise.resolve(`refresh:${userId}:token-${this.issued}`);
   }
 
@@ -310,7 +315,12 @@ export class FakeTokenIssuer implements TokenIssuer {
     if (kind !== 'refresh' || !userId || !tokenId) {
       return Promise.resolve(null);
     }
-    return Promise.resolve({ userId, tokenId, expiresAt: new Date(Date.now() + 60_000) });
+    return Promise.resolve({
+      userId,
+      tokenId,
+      issuedAt: this.issuedAt.get(tokenId) ?? new Date(0),
+      expiresAt: new Date(Date.now() + 60_000),
+    });
   }
 
   // Ticket format: link:<userId>:<state>
@@ -334,6 +344,51 @@ export class InMemoryRefreshTokenRevocations implements RefreshTokenRevocations 
 
   isRevoked(tokenId: string): Promise<boolean> {
     return Promise.resolve(this.revoked.has(tokenId));
+  }
+
+  /** User id → the instant before which their sessions no longer count. */
+  readonly cutoffs = new Map<string, Date>();
+
+  revokeAllFor(userId: string, before: Date): Promise<void> {
+    this.cutoffs.set(userId, before);
+    return Promise.resolve();
+  }
+
+  isRevokedFor(userId: string, issuedAt: Date): Promise<boolean> {
+    const cutoff = this.cutoffs.get(userId);
+    return Promise.resolve(cutoff !== undefined && issuedAt < cutoff);
+  }
+}
+
+/** Reset tokens kept in memory; a test can expire them by hand. */
+export class InMemoryPasswordResetTokens implements PasswordResetTokens {
+  readonly issued: Array<{ token: string; userId: string; ttlSeconds: number }> = [];
+  private readonly valid = new Map<string, string>();
+  failWith: Error | null = null;
+
+  issue(userId: string, ttlSeconds: number): Promise<string> {
+    if (this.failWith) {
+      return Promise.reject(this.failWith);
+    }
+    for (const [token, owner] of this.valid) {
+      if (owner === userId) {
+        this.valid.delete(token);
+      }
+    }
+    const token = `reset-token-${this.issued.length + 1}`;
+    this.issued.push({ token, userId, ttlSeconds });
+    this.valid.set(token, userId);
+    return Promise.resolve(token);
+  }
+
+  consume(token: string): Promise<string | null> {
+    const userId = this.valid.get(token) ?? null;
+    this.valid.delete(token);
+    return Promise.resolve(userId);
+  }
+
+  expire(token: string): void {
+    this.valid.delete(token);
   }
 }
 

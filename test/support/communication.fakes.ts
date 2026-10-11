@@ -5,16 +5,17 @@ import type {
   DirectMessage,
 } from '../../src/modules/messaging/domain/direct-message.js';
 import type { MessageRepository } from '../../src/modules/messaging/domain/ports/messaging.ports.js';
-import type { Email, NewNotification, Notification } from '../../src/modules/notifications/domain/notification.js';
+import type { Reach } from '../../src/modules/messaging/domain/messaging-reach.js';
+import type { NewNotification, Notification } from '../../src/modules/notifications/domain/notification.js';
 import type {
   Addressee,
   DueEvaluation,
-  EmailProvider,
   NotificationRepository,
   ReminderQueries,
   StartingClass,
 } from '../../src/modules/notifications/domain/ports/notification.ports.js';
 import type { LocalClock } from '../../src/modules/notifications/domain/reminders.js';
+import type { Email, EmailProvider } from '../../src/shared/domain/email/email-provider.js';
 import type { NotificationRequest, Notifier } from '../../src/shared/domain/notifications/notifier.js';
 import type { Realtime, RealtimeEvent } from '../../src/shared/domain/realtime/realtime.js';
 
@@ -45,12 +46,12 @@ export class FakeRealtime implements Realtime {
     this.published.push({ userId, event, payload });
   }
 
-  isOnline(userId: string): boolean {
-    return this.online.has(userId);
+  isOnline(userId: string): Promise<boolean> {
+    return Promise.resolve(this.online.has(userId));
   }
 
-  isViewing(userId: string, key: string): boolean {
-    return this.viewing.has(`${userId}|${key}`);
+  isViewing(userId: string, key: string): Promise<boolean> {
+    return Promise.resolve(this.viewing.has(`${userId}|${key}`));
   }
 }
 
@@ -180,23 +181,69 @@ export class InMemoryReminderQueries implements ReminderQueries {
   }
 }
 
+/** A group as messaging sees it: who teaches it and who is enrolled, by account. */
+export interface TaughtGroup {
+  teacherUserIds: string[];
+  studentUserIds: string[];
+}
+
 export class InMemoryMessageRepository implements MessageRepository {
   readonly messages: DirectMessage[] = [];
   /** The active members of each institution. */
   readonly members = new Map<string, Contact[]>();
-  /** Stands in for the membership lookup of the Prisma adapter. */
+  /** The groups of each institution. */
+  readonly groups = new Map<string, TaughtGroup[]>();
+  /** Stand in for the membership and enrollment lookups of the Prisma adapter. */
   lookupMembers: (institutionId: string) => Contact[] = (id) => this.members.get(id) ?? [];
+  lookupGroups: (institutionId: string) => TaughtGroup[] = (id) => this.groups.get(id) ?? [];
   private clock = 0;
+
+  private within(institutionId: string, fromUserId: string, reach: Reach, to: Contact): boolean {
+    if (reach.anyone || to.roles.some((role) => reach.roles.includes(role))) {
+      return true;
+    }
+    const groups = this.lookupGroups(institutionId);
+    const isStudent = to.roles.includes('STUDENT');
+    const teaches = (teacher: string, student: string) =>
+      groups.some((group) => group.teacherUserIds.includes(teacher) && group.studentUserIds.includes(student));
+    return (
+      (reach.ownStudents && isStudent && teaches(fromUserId, to.userId)) ||
+      (reach.ownTeachers && to.roles.includes('TEACHER') && teaches(to.userId, fromUserId)) ||
+      (reach.groupMates &&
+        isStudent &&
+        groups.some((group) => group.studentUserIds.includes(fromUserId) && group.studentUserIds.includes(to.userId)))
+    );
+  }
+
+  canReach(institutionId: string, fromUserId: string, reach: Reach, toUserId: string): Promise<boolean> {
+    const to = this.lookupMembers(institutionId).find((contact) => contact.userId === toUserId);
+    return Promise.resolve(to !== undefined && this.within(institutionId, fromUserId, reach, to));
+  }
+
+  hasWritten(institutionId: string, fromUserId: string, toUserId: string): Promise<boolean> {
+    return Promise.resolve(
+      this.messages.some(
+        (message) =>
+          message.institutionId === institutionId && message.senderId === fromUserId && message.recipientId === toUserId,
+      ),
+    );
+  }
 
   findContact(institutionId: string, userId: string): Promise<Contact | null> {
     return Promise.resolve(this.lookupMembers(institutionId).find((contact) => contact.userId === userId) ?? null);
   }
 
-  searchContacts(institutionId: string, exceptUserId: string, query: string, limit: number): Promise<Contact[]> {
+  searchContacts(
+    institutionId: string,
+    userId: string,
+    reach: Reach,
+    query: string,
+    limit: number,
+  ): Promise<Contact[]> {
     const words = query.toLowerCase().split(/\s+/).filter(Boolean);
     return Promise.resolve(
       this.lookupMembers(institutionId)
-        .filter((contact) => contact.userId !== exceptUserId)
+        .filter((contact) => contact.userId !== userId && this.within(institutionId, userId, reach, contact))
         .filter((contact) => {
           const name = `${contact.firstName} ${contact.lastName}`.toLowerCase();
           return words.every((word) => name.includes(word));

@@ -6,6 +6,7 @@ export interface RefreshTokenClaims {
   userId: string;
   /** Unique id of this token, used to revoke it. */
   tokenId: string;
+  issuedAt: Date;
   expiresAt: Date;
 }
 

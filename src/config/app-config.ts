@@ -41,6 +41,16 @@ export interface AppConfig {
   analyticsCacheSeconds: number;
   reminders: RemindersConfig;
   messaging: MessagingConfig;
+  email: EmailConfig;
+}
+
+export interface EmailConfig {
+  /** The real email service. Null writes emails to the log instead of sending them. */
+  resend: { apiKey: string; from: string } | null;
+  /** True when real email was asked for but is not fully configured, so the log is used instead. */
+  realEmailWithoutKey: boolean;
+  /** Whether the log also gets the text of each email. For a developer's own machine only. */
+  logBodies: boolean;
 }
 
 export interface RemindersConfig {
@@ -174,6 +184,19 @@ function flag(env: Env, key: string): boolean {
   return raw === 'true';
 }
 
+/** Emails go through Resend only when it is switched on and has both a key and a sender. */
+function emailConfig(env: Env): EmailConfig {
+  const useRealEmail = flag(env, 'USE_REAL_EMAIL');
+  const apiKey = env.RESEND_API_KEY?.trim();
+  const from = env.EMAIL_FROM?.trim();
+  const isConfigured = Boolean(apiKey && from);
+  return {
+    resend: useRealEmail && apiKey && from ? { apiKey, from } : null,
+    realEmailWithoutKey: useRealEmail && !isConfigured,
+    logBodies: flag(env, 'EMAIL_LOG_BODIES'),
+  };
+}
+
 /** The assistant runs on OpenAI only when it is switched on and has a key; otherwise on the mock. */
 function aiConfig(env: Env): AiConfig {
   const useRealAi = flag(env, 'USE_REAL_AI');
@@ -221,6 +244,7 @@ export function loadAppConfig(env: Env): AppConfig {
       enabled: (env.REMINDERS_ENABLED ?? '').trim() === '' ? env.NODE_ENV !== 'test' : flag(env, 'REMINDERS_ENABLED'),
       cron: env.REMINDERS_CRON?.trim() || '*/5 * * * *',
     },
+    email: emailConfig(env),
     messaging: {
       maxMessages: positiveInt(env, 'MESSAGES_MAX_PER_WINDOW', 30),
       windowSeconds: positiveInt(env, 'MESSAGES_WINDOW_SECONDS', 60),

@@ -8,6 +8,7 @@ import {
   type ConversationSummary,
   type DirectMessage,
 } from '../domain/direct-message.js';
+import type { Reach } from '../domain/messaging-reach.js';
 import type { MessageRepository } from '../domain/ports/messaging.ports.js';
 
 /** How far back the list of conversations looks; older ones reappear when someone writes again. */
@@ -42,6 +43,42 @@ const activeMemberOf = (institutionId: string): Prisma.MembershipWhereInput => (
   user: { status: 'ACTIVE' },
 });
 
+const ACTIVE = 'ACTIVE' as const;
+
+/**
+ * The memberships within `reach` of a user, as a filter. Null when the reach
+ * is empty, so the caller does not run a query that can match nobody.
+ */
+function withinReach(institutionId: string, userId: string, reach: Reach): Prisma.MembershipWhereInput | null {
+  if (reach.anyone) {
+    return {};
+  }
+  const self = { userId, isActive: true };
+  const enrolledWith = (group: Prisma.GroupWhereInput): Prisma.MembershipWhereInput => ({
+    role: 'STUDENT',
+    enrollments: { some: { status: ACTIVE, group: { institutionId, ...group } } },
+  });
+  const any: Prisma.MembershipWhereInput[] = [];
+  if (reach.roles.length > 0) {
+    any.push({ role: { in: reach.roles } });
+  }
+  if (reach.ownStudents) {
+    any.push(enrolledWith({ courses: { some: { teacher: self } } }));
+  }
+  if (reach.groupMates) {
+    any.push(enrolledWith({ enrollments: { some: { status: ACTIVE, student: self } } }));
+  }
+  if (reach.ownTeachers) {
+    any.push({
+      role: 'TEACHER',
+      coursesTaught: {
+        some: { group: { institutionId, enrollments: { some: { status: ACTIVE, student: self } } } },
+      },
+    });
+  }
+  return any.length > 0 ? { OR: any } : null;
+}
+
 @Injectable()
 export class PrismaMessageRepository implements MessageRepository {
   private readonly logger = new Logger(PrismaMessageRepository.name);
@@ -58,14 +95,25 @@ export class PrismaMessageRepository implements MessageRepository {
     });
   }
 
-  searchContacts(institutionId: string, exceptUserId: string, query: string, limit: number): Promise<Contact[]> {
+  searchContacts(
+    institutionId: string,
+    userId: string,
+    reach: Reach,
+    query: string,
+    limit: number,
+  ): Promise<Contact[]> {
     const words = query.split(/\s+/).filter(Boolean);
+    const reachable = withinReach(institutionId, userId, reach);
+    if (!reachable) {
+      return Promise.resolve([]);
+    }
     return runQuery(this.logger, async () => {
       const rows = await this.prisma.membership.findMany({
         where: {
+          ...reachable,
           institutionId,
           isActive: true,
-          userId: { not: exceptUserId },
+          userId: { not: userId },
           user: {
             status: 'ACTIVE',
             // Every word must appear in the first or the last name, so "ada love" finds Ada Lovelace
@@ -84,6 +132,31 @@ export class PrismaMessageRepository implements MessageRepository {
       });
       return toContacts(rows).slice(0, limit);
     });
+  }
+
+  canReach(institutionId: string, fromUserId: string, reach: Reach, toUserId: string): Promise<boolean> {
+    const reachable = withinReach(institutionId, fromUserId, reach);
+    if (!reachable) {
+      return Promise.resolve(false);
+    }
+    return runQuery(
+      this.logger,
+      async () =>
+        (await this.prisma.membership.count({
+          where: { ...reachable, ...activeMemberOf(institutionId), userId: toUserId },
+        })) > 0,
+    );
+  }
+
+  hasWritten(institutionId: string, fromUserId: string, toUserId: string): Promise<boolean> {
+    return runQuery(
+      this.logger,
+      async () =>
+        (await this.prisma.directMessage.findFirst({
+          where: { institutionId, senderId: fromUserId, recipientId: toUserId },
+          select: { id: true },
+        })) !== null,
+    );
   }
 
   save(message: Omit<DirectMessage, 'id' | 'readAt' | 'createdAt'>): Promise<DirectMessage> {

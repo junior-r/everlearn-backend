@@ -34,10 +34,20 @@ import { GetCurrentUserUseCase } from '../../application/use-cases/get-current-u
 import { LoginWithGoogleUseCase } from '../../application/use-cases/login-with-google.use-case.js';
 import { LoginWithPasswordUseCase } from '../../application/use-cases/login-with-password.use-case.js';
 import { LogoutUseCase } from '../../application/use-cases/logout.use-case.js';
+import {
+  RequestPasswordResetUseCase,
+  ResetPasswordUseCase,
+} from '../../application/use-cases/password-reset.use-cases.js';
 import { RefreshSessionUseCase } from '../../application/use-cases/refresh-session.use-case.js';
 import { StartGoogleLoginUseCase } from '../../application/use-cases/start-google-login.use-case.js';
 import { AuthCookies } from '../auth-cookies.js';
-import { ChangePasswordDto, LoginDto, type AuthResponse } from '../dtos/auth.dtos.js';
+import {
+  ChangePasswordDto,
+  ForgotPasswordDto,
+  LoginDto,
+  ResetPasswordDto,
+  type AuthResponse,
+} from '../dtos/auth.dtos.js';
 
 @Controller('auth')
 export class AuthController {
@@ -52,6 +62,8 @@ export class AuthController {
     @Inject(LoginWithGoogleUseCase) private readonly loginWithGoogle: LoginWithGoogleUseCase,
     @Inject(GetCurrentUserUseCase) private readonly getCurrentUser: GetCurrentUserUseCase,
     @Inject(ChangePasswordUseCase) private readonly changeUserPassword: ChangePasswordUseCase,
+    @Inject(RequestPasswordResetUseCase) private readonly requestPasswordReset: RequestPasswordResetUseCase,
+    @Inject(ResetPasswordUseCase) private readonly resetUserPassword: ResetPasswordUseCase,
     @Inject(StartGoogleLinkUseCase) private readonly startGoogleLink: StartGoogleLinkUseCase,
     @Inject(CompleteGoogleLinkUseCase)
     private readonly completeGoogleLink: CompleteGoogleLinkUseCase,
@@ -69,6 +81,25 @@ export class AuthController {
     @Res({ passthrough: true }) response: Response,
   ): Promise<AuthResponse> {
     return this.respondWith(await this.loginWithPassword.execute(dto), response);
+  }
+
+  /** Always answers the same way, whether or not the address belongs to an account. */
+  @Public()
+  @UseGuards(RateLimitGuard)
+  @RateLimit({ scope: 'auth-forgot-password', bodyField: 'email' })
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async forgotPassword(@Body() dto: ForgotPasswordDto): Promise<void> {
+    await this.requestPasswordReset.execute(dto.email, dto.locale);
+  }
+
+  @Public()
+  @UseGuards(RateLimitGuard)
+  @RateLimit({ scope: 'auth-reset-password' })
+  @Post('reset-password')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async resetPassword(@Body() dto: ResetPasswordDto): Promise<void> {
+    await this.resetUserPassword.execute(dto.token, dto.newPassword);
   }
 
   @Public()

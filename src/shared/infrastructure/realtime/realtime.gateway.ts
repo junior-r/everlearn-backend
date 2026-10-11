@@ -4,10 +4,10 @@ import {
   MessageBody,
   SubscribeMessage,
   WebSocketGateway,
+  WebSocketServer,
   type OnGatewayConnection,
-  type OnGatewayDisconnect,
 } from '@nestjs/websockets';
-import type { DefaultEventsMap, Socket } from 'socket.io';
+import type { DefaultEventsMap, Namespace, Socket } from 'socket.io';
 import { ACCESS_TOKEN_VERIFIER, type AccessTokenVerifier } from '../../domain/auth/access-token-verifier.js';
 import type { Realtime, RealtimeEvent } from '../../domain/realtime/realtime.js';
 
@@ -21,17 +21,24 @@ interface SocketData {
 
 type UserSocket = Socket<DefaultEventsMap, DefaultEventsMap, DefaultEventsMap, SocketData>;
 
+/** Every browser of a user is in this room, on whichever server it is connected to. */
+const roomOf = (userId: string) => `user:${userId}`;
+
 /**
  * The Socket.io endpoint (`/realtime`) browsers keep open to receive direct
  * messages and notices as they happen. A connection is accepted only with a
  * valid access token, sent in the handshake; the server pushes, and the only
- * thing a client may say is what it is looking at.
+ * thing a client may say is what it is looking at. Nothing is kept in this
+ * server's memory: rooms and socket data go through the Socket.io adapter, so
+ * with the Redis adapter every server sees every connection.
  */
 // Any origin may connect: access depends on the token in the handshake, never on a cookie
 @WebSocketGateway({ namespace: 'realtime', cors: { origin: true } })
-export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect, Realtime {
+export class RealtimeGateway implements OnGatewayConnection, Realtime {
   private readonly logger = new Logger(RealtimeGateway.name);
-  private readonly sockets = new Map<string, Set<UserSocket>>();
+
+  @WebSocketServer()
+  private readonly server!: Namespace<DefaultEventsMap, DefaultEventsMap, DefaultEventsMap, SocketData>;
 
   constructor(@Inject(ACCESS_TOKEN_VERIFIER) private readonly verifier: AccessTokenVerifier) {}
 
@@ -48,20 +55,7 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
       return;
     }
     client.data.userId = user.userId;
-    const sockets = this.sockets.get(user.userId) ?? new Set<UserSocket>();
-    sockets.add(client);
-    this.sockets.set(user.userId, sockets);
-  }
-
-  handleDisconnect(client: UserSocket): void {
-    const { userId } = client.data;
-    const sockets = userId ? this.sockets.get(userId) : undefined;
-    if (userId && sockets) {
-      sockets.delete(client);
-      if (sockets.size === 0) {
-        this.sockets.delete(userId);
-      }
-    }
+    await client.join(roomOf(user.userId));
   }
 
   @SubscribeMessage('viewing')
@@ -74,20 +68,31 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
   }
 
   publish(userId: string, event: RealtimeEvent, payload: unknown): void {
-    for (const socket of this.sockets.get(userId) ?? []) {
-      try {
-        socket.emit(event, payload);
-      } catch (error) {
-        this.logger.warn(error instanceof Error ? error.message : String(error));
-      }
+    try {
+      this.server.to(roomOf(userId)).emit(event, payload);
+    } catch (error) {
+      this.logger.warn(error instanceof Error ? error.message : String(error));
     }
   }
 
-  isOnline(userId: string): boolean {
-    return (this.sockets.get(userId)?.size ?? 0) > 0;
+  async isOnline(userId: string): Promise<boolean> {
+    return (await this.socketsOf(userId)).length > 0;
   }
 
-  isViewing(userId: string, key: string): boolean {
-    return [...(this.sockets.get(userId) ?? [])].some((socket) => socket.data.viewing === key);
+  async isViewing(userId: string, key: string): Promise<boolean> {
+    return (await this.socketsOf(userId)).some((data) => data.viewing === key);
+  }
+
+  /**
+   * The user's connections on every server. If the other servers cannot be
+   * asked, the user counts as away: an extra notice is better than a missed one.
+   */
+  private async socketsOf(userId: string): Promise<SocketData[]> {
+    try {
+      return (await this.server.in(roomOf(userId)).fetchSockets()).map((socket) => socket.data);
+    } catch (error) {
+      this.logger.warn(`Presence unknown: ${error instanceof Error ? error.message : String(error)}`);
+      return [];
+    }
   }
 }

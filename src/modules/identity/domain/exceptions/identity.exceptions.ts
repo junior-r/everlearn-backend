@@ -106,6 +106,12 @@ export class PasswordUnchangedException extends DomainException {
   }
 }
 
+export class InvalidResetTokenException extends DomainException {
+  constructor() {
+    super('VALIDATION', 'INVALID_RESET_TOKEN', 'This reset link is not valid any more. Ask for a new one');
+  }
+}
+
 export class MemberAlreadyRegisteredException extends DomainException {
   constructor() {
     super('CONFLICT', 'MEMBER_ALREADY_REGISTERED', 'This person already has this role here');

@@ -1,3 +1,4 @@
+import type { EmailProvider } from '../../../../shared/domain/email/email-provider.js';
 import type { NotificationRequest } from '../../../../shared/domain/notifications/notifier.js';
 import { RealtimeEvent, type Realtime } from '../../../../shared/domain/realtime/realtime.js';
 import {
@@ -7,11 +8,7 @@ import {
   type NewNotification,
   type Notification,
 } from '../../domain/notification.js';
-import type {
-  EmailProvider,
-  NotificationRepository,
-  ReminderQueries,
-} from '../../domain/ports/notification.ports.js';
+import type { NotificationRepository, ReminderQueries } from '../../domain/ports/notification.ports.js';
 import {
   CLASS_REMINDER_MINUTES,
   EVALUATION_REMINDER_HOURS,

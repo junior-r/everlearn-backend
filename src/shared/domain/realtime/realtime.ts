@@ -15,8 +15,8 @@ export type RealtimeEvent = (typeof RealtimeEvent)[keyof typeof RealtimeEvent];
  */
 export interface Realtime {
   publish(userId: string, event: RealtimeEvent, payload: unknown): void;
-  /** Whether the user has at least one browser connected. */
-  isOnline(userId: string): boolean;
+  /** Whether the user has at least one browser connected, to any server. */
+  isOnline(userId: string): Promise<boolean>;
   /** Whether one of the user's browsers says it is showing `key` right now (an open conversation). */
-  isViewing(userId: string, key: string): boolean;
+  isViewing(userId: string, key: string): Promise<boolean>;
 }
