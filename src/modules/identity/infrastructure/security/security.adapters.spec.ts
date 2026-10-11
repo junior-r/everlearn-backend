@@ -1,4 +1,5 @@
 import { JwtService } from '@nestjs/jwt';
+import { InMemoryRefreshTokenRevocations } from '../../../../../test/support/identity.fakes.js';
 import { loadAppConfig, type AppConfig } from '../../../../config/app-config.js';
 import type { AuthenticatedUser } from '../../../../shared/domain/auth/authenticated-user.js';
 import { Role } from '../../../../shared/domain/auth/role.js';
@@ -19,12 +20,16 @@ const user: AuthenticatedUser = {
   memberships: [{ id: 'm-1', institutionId: 'inst-1', role: Role.TEACHER }],
 };
 
-function tokenService(overrides: Partial<AppConfig['jwt']> = {}): JwtTokenService {
+function tokenService(
+  overrides: Partial<AppConfig['jwt']> = {},
+  revocations = new InMemoryRefreshTokenRevocations(),
+): JwtTokenService {
   const config = loadAppConfig(env);
-  return new JwtTokenService(new JwtService({}), {
-    ...config,
-    jwt: { ...config.jwt, ...overrides },
-  });
+  return new JwtTokenService(
+    new JwtService({}),
+    { ...config, jwt: { ...config.jwt, ...overrides } },
+    revocations,
+  );
 }
 
 describe('JwtTokenService', () => {
@@ -34,6 +39,27 @@ describe('JwtTokenService', () => {
     const token = await service.issueAccessToken(user);
 
     await expect(service.verifyAccessToken(token)).resolves.toEqual(user);
+  });
+
+  it('refuses an access token issued before the sessions of its user were closed', async () => {
+    const revocations = new InMemoryRefreshTokenRevocations();
+    const service = tokenService({}, revocations);
+    const token = await service.issueAccessToken(user);
+    const other = await service.issueAccessToken({ ...user, userId: 'user-2' });
+
+    // A password reset a moment later closes everything issued before it
+    await revocations.revokeAllFor('user-1', new Date(Date.now() + 5000));
+
+    await expect(service.verifyAccessToken(token)).resolves.toBeNull();
+    await expect(service.verifyAccessToken(other)).resolves.toMatchObject({ userId: 'user-2' });
+  });
+
+  it('accepts an access token issued after that', async () => {
+    const revocations = new InMemoryRefreshTokenRevocations();
+    await revocations.revokeAllFor('user-1', new Date(Date.now() - 5000));
+    const service = tokenService({}, revocations);
+
+    await expect(service.verifyAccessToken(await service.issueAccessToken(user))).resolves.toEqual(user);
   });
 
   it('round-trips the user id through a refresh token with a unique id and its expiry', async () => {

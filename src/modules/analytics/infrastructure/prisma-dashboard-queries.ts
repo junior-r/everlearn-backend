@@ -3,7 +3,7 @@ import type { Prisma } from '../../../shared/infrastructure/prisma/generated/cli
 import { runQuery } from '../../../shared/infrastructure/prisma/prisma-errors.js';
 import { PrismaService } from '../../../shared/infrastructure/prisma/prisma.service.js';
 import type { AttendanceCounts } from '../../attendance/domain/attendance-standing.js';
-import type { InstitutionCounts, PlatformDashboard } from '../domain/dashboards.js';
+import type { AcademicOverview, InstitutionCounts, PlatformDashboard } from '../domain/dashboards.js';
 import type { AssignedCourse, DashboardQueries, GroupAttendance } from '../domain/ports/analytics.ports.js';
 
 const LARGEST_INSTITUTIONS = 5;
@@ -74,6 +74,79 @@ export class PrismaDashboardQueries implements DashboardQueries {
         }),
       ]);
       return { activeStudents, teachers, activeGroups, pendingReviews, attendance: countsByStatus(attendance) };
+    });
+  }
+
+  academic(institutionId: string, day: Date): Promise<AcademicOverview> {
+    const runningGroup = { institutionId, period: running(day) };
+    const slots = { select: { startMinute: true, endMinute: true } };
+    const hours = (courses: Array<{ scheduleSlots: Array<{ startMinute: number; endMinute: number }> }>) =>
+      Math.round(
+        (courses.flatMap((course) => course.scheduleSlots).reduce((sum, slot) => sum + slot.endMinute - slot.startMinute, 0) /
+          60) *
+          100,
+      ) / 100;
+    return runQuery(this.logger, async () => {
+      const [groups, pensums, teachers] = await Promise.all([
+        this.prisma.group.findMany({
+          where: runningGroup,
+          select: {
+            id: true,
+            name: true,
+            level: true,
+            period: { select: { name: true } },
+            pensum: { select: { name: true } },
+            _count: { select: { enrollments: { where: { status: 'ACTIVE' } } } },
+            courses: { select: { teacherId: true, scheduleSlots: slots } },
+          },
+          orderBy: [{ level: 'asc' }, { name: 'asc' }],
+        }),
+        this.prisma.pensum.findMany({
+          where: { institutionId },
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            _count: { select: { subjects: true, groups: { where: { period: running(day) } } } },
+          },
+          orderBy: { name: 'asc' },
+        }),
+        this.prisma.membership.findMany({
+          where: { institutionId, role: 'TEACHER', isActive: true },
+          select: {
+            id: true,
+            user: { select: { firstName: true, lastName: true } },
+            coursesTaught: { where: { group: runningGroup }, select: { scheduleSlots: slots } },
+          },
+          orderBy: [{ user: { lastName: 'asc' } }, { user: { firstName: 'asc' } }],
+        }),
+      ]);
+      return {
+        groups: groups.map((group) => ({
+          id: group.id,
+          name: group.name,
+          level: group.level,
+          periodName: group.period.name,
+          pensumName: group.pensum.name,
+          students: group._count.enrollments,
+          courses: group.courses.length,
+          coursesWithoutTeacher: group.courses.filter((course) => course.teacherId === null).length,
+          weeklyHours: hours(group.courses),
+        })),
+        pensums: pensums.map(({ id, code, name, _count }) => ({
+          id,
+          code,
+          name,
+          subjects: _count.subjects,
+          activeGroups: _count.groups,
+        })),
+        teachers: teachers.map((teacher) => ({
+          membershipId: teacher.id,
+          name: `${teacher.user.firstName} ${teacher.user.lastName}`,
+          courses: teacher.coursesTaught.length,
+          weeklyHours: hours(teacher.coursesTaught),
+        })),
+      };
     });
   }
 

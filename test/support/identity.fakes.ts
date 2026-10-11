@@ -356,7 +356,9 @@ export class InMemoryRefreshTokenRevocations implements RefreshTokenRevocations 
 
   isRevokedFor(userId: string, issuedAt: Date): Promise<boolean> {
     const cutoff = this.cutoffs.get(userId);
-    return Promise.resolve(cutoff !== undefined && issuedAt < cutoff);
+    // Whole seconds, as the Redis adapter compares them: tokens carry no finer time
+    const seconds = (date: Date) => Math.floor(date.getTime() / 1000);
+    return Promise.resolve(cutoff !== undefined && seconds(issuedAt) < seconds(cutoff));
   }
 }
 

@@ -259,7 +259,9 @@ describe('password reset', () => {
         resetTokens,
         fakes.hasher,
         fakes.revocations,
+        emails,
         () => new Date('2026-10-11T12:00:00Z'),
+        (error) => failures.push(error),
       ),
       login: new LoginWithPasswordUseCase(fakes.users, fakes.hasher, fakes.sessions),
       refresh: new RefreshSessionUseCase(fakes.users, fakes.tokens, fakes.revocations, fakes.sessions),
@@ -371,5 +373,56 @@ describe('password reset', () => {
     ctx.tokens.now = () => new Date('2026-10-11T12:00:05Z');
     const after = await ctx.login.execute({ email: 'grace@example.com', password: 'a-brand-new-password' });
     await expect(ctx.refresh.execute(after.refreshToken)).resolves.toBeDefined();
+  });
+});
+
+describe('after a password reset', () => {
+  function afterReset() {
+    const fakes = createIdentityFakes();
+    const resetTokens = new InMemoryPasswordResetTokens();
+    const emails = new RecordingEmailProvider();
+    const failures: unknown[] = [];
+    const user = fakes.users.seed({ email: 'grace@example.com', firstName: 'Grace', status: UserStatus.ACTIVE });
+    const reset = new ResetPasswordUseCase(
+      fakes.users,
+      resetTokens,
+      fakes.hasher,
+      fakes.revocations,
+      emails,
+      () => new Date('2026-10-11T12:00:00Z'),
+      (error) => failures.push(error),
+    );
+    return { ...fakes, resetTokens, emails, failures, user, reset };
+  }
+
+  it('tells the owner of the account by email, without the new password', async () => {
+    const ctx = afterReset();
+    const token = await ctx.resetTokens.issue(ctx.user.id, 900);
+
+    await ctx.reset.execute(token, 'a-brand-new-password');
+
+    expect(ctx.emails.sent).toHaveLength(1);
+    expect(ctx.emails.sent[0]).toMatchObject({ to: 'grace@example.com', subject: 'Tu contraseña de Everlearn fue cambiada' });
+    expect(ctx.emails.sent[0].text).toContain('Hola, Grace:');
+    expect(ctx.emails.sent[0].text).not.toContain('a-brand-new-password');
+  });
+
+  it('still changes the password when that email cannot be sent', async () => {
+    const ctx = afterReset();
+    ctx.emails.refused.add('grace@example.com');
+    const token = await ctx.resetTokens.issue(ctx.user.id, 900);
+
+    await expect(ctx.reset.execute(token, 'a-brand-new-password')).resolves.toBeUndefined();
+
+    expect(ctx.failures).toHaveLength(1);
+    expect(await ctx.hasher.verify('a-brand-new-password', ctx.users.users.get(ctx.user.id)?.passwordHash ?? null)).toBe(true);
+  });
+
+  it('sends nothing when the token was refused', async () => {
+    const ctx = afterReset();
+
+    await expect(ctx.reset.execute('made-up', 'a-brand-new-password')).rejects.toBeInstanceOf(InvalidResetTokenException);
+
+    expect(ctx.emails.sent).toEqual([]);
   });
 });

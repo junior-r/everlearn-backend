@@ -23,9 +23,9 @@ One way to tell a person something, in the app and by email; a job that sends re
   | Who writes | May start a conversation with |
   |---|---|
   | Institution Admin, Principal, Staff | anyone in the institution |
-  | Teacher | Students actively enrolled in a group they teach, other Teachers, and the office (Admin, Principal, Staff) |
+  | Teacher | Students actively enrolled in a group they teach and those Students' Guardians, other Teachers, and the office (Admin, Principal, Staff) |
   | Student | Teachers of a group they are actively enrolled in, and Students of those groups |
-  | Guardian | the office only |
+  | Guardian | the office, and the Teachers who currently teach a Student linked to them |
 
   Someone holding several roles gets what any of them allows. The same filter decides the search and the delivery, so a person out of reach cannot be found, written to or opened: all three answer "not found", as for a stranger.
 - **Answering is allowed where starting is not.** A Student may reply to the office once the office has written to them, because a conversation one side cannot answer is a broadcast. It opens nothing else: not the other members of the office, and not a Teacher who is not theirs.
@@ -49,7 +49,7 @@ One way to tell a person something, in the app and by email; a job that sends re
 
 - **Resend has never been called.** There is no key here; the adapter is tested against a scripted answer. Emails are always in Spanish and plain text, and there is no way to unsubscribe.
 - A socket stays open after its access token expires, until it reconnects; the token is checked only at the handshake.
-- The messaging rule limits who may talk; there is still no blocking, reporting, moderation or retention policy, and messages are stored in clear text. Guardians can write only to the office, not to their wards' Teachers.
+- The messaging rule limits who may talk; there is still no blocking, reporting, moderation or retention policy, and messages are stored in clear text. A Guardian cannot write to their own ward, nor to other Guardians.
 - "Group mates" means any group both Students are actively enrolled in, whatever its academic period.
 - Notices are never deleted, and only the latest 20 are shown.
 - Class reminders follow the timetable only: they know nothing of holidays or cancelled classes, and a class within 15 minutes of midnight may be missed.

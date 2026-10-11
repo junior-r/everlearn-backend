@@ -5,6 +5,7 @@ import { REDIS_CLIENT } from '../../shared/infrastructure/redis/redis.tokens.js'
 import { GetGradebookUseCase } from '../evaluations/application/use-cases/evaluation.use-cases.js';
 import { EvaluationsModule } from '../evaluations/evaluations.module.js';
 import {
+  GetAcademicOverviewUseCase,
   GetInstitutionDashboardUseCase,
   GetPlatformDashboardUseCase,
   GetTeacherDashboardUseCase,
@@ -48,6 +49,12 @@ import { AnalyticsController } from './presentation/analytics.controller.js';
       provide: GetInstitutionDashboardUseCase,
       useFactory: (queries: DashboardQueries, cache: DashboardCache, config: AppConfig) =>
         new GetInstitutionDashboardUseCase(queries, cache, config.analyticsCacheSeconds),
+      inject: [DASHBOARD_QUERIES, DASHBOARD_CACHE, APP_CONFIG],
+    },
+    {
+      provide: GetAcademicOverviewUseCase,
+      useFactory: (queries: DashboardQueries, cache: DashboardCache, config: AppConfig) =>
+        new GetAcademicOverviewUseCase(queries, cache, config.analyticsCacheSeconds),
       inject: [DASHBOARD_QUERIES, DASHBOARD_CACHE, APP_CONFIG],
     },
     {

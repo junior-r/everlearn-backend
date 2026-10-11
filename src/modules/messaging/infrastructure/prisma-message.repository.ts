@@ -76,6 +76,31 @@ function withinReach(institutionId: string, userId: string, reach: Reach): Prism
       },
     });
   }
+  if (reach.wardsTeachers) {
+    // Teachers of a group where one of the member's wards is enrolled now
+    const ward = { guardians: { some: { guardian: self } } };
+    any.push({
+      role: 'TEACHER',
+      coursesTaught: {
+        some: { group: { institutionId, enrollments: { some: { status: ACTIVE, student: ward } } } },
+      },
+    });
+  }
+  if (reach.studentsGuardians) {
+    // Guardians of a Student enrolled now in a group the member teaches
+    any.push({
+      role: 'GUARDIAN',
+      wards: {
+        some: {
+          student: {
+            enrollments: {
+              some: { status: ACTIVE, group: { institutionId, courses: { some: { teacher: self } } } },
+            },
+          },
+        },
+      },
+    });
+  }
   return any.length > 0 ? { OR: any } : null;
 }
 

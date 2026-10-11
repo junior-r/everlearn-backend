@@ -72,3 +72,42 @@ export function gradeDistribution(averages: ReadonlyArray<number | null>): Grade
 export function today(now: Date): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 }
+
+/** A group of a running period, as someone overseeing the teaching needs to see it. */
+export interface GroupOverview {
+  id: string;
+  name: string;
+  level: number;
+  periodName: string;
+  pensumName: string;
+  students: number;
+  /** Subjects the group takes, and how many of them still have no Teacher. */
+  courses: number;
+  coursesWithoutTeacher: number;
+  /** Hours of class the timetable gives the group each week. */
+  weeklyHours: number;
+}
+
+export interface PensumOverview {
+  id: string;
+  code: string;
+  name: string;
+  subjects: number;
+  /** Groups of a running period that follow it. */
+  activeGroups: number;
+}
+
+export interface TeacherLoad {
+  membershipId: string;
+  name: string;
+  /** Courses assigned in running periods, and the hours the timetable gives them each week. */
+  courses: number;
+  weeklyHours: number;
+}
+
+/** The teaching of an institution right now: its groups, its pensums and its Teachers' load. */
+export interface AcademicOverview {
+  groups: GroupOverview[];
+  pensums: PensumOverview[];
+  teachers: TeacherLoad[];
+}

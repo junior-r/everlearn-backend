@@ -7,6 +7,10 @@ import type {
   AuthenticatedUser,
   MembershipClaim,
 } from '../../../../shared/domain/auth/authenticated-user.js';
+import {
+  REFRESH_TOKEN_REVOCATIONS,
+  type RefreshTokenRevocations,
+} from '../../domain/ports/refresh-token-revocations.js';
 import type {
   GoogleLinkTicket,
   RefreshTokenClaims,
@@ -24,6 +28,7 @@ interface AccessTokenPayload {
   // Present only while the account has a temporary password
   mustChangePassword?: true;
   memberships: MembershipClaim[];
+  iat: number;
 }
 
 interface RefreshTokenPayload {
@@ -49,10 +54,11 @@ export class JwtTokenService implements TokenIssuer, AccessTokenVerifier {
   constructor(
     @Inject(JwtService) private readonly jwt: JwtService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
+    @Inject(REFRESH_TOKEN_REVOCATIONS) private readonly revocations: RefreshTokenRevocations,
   ) {}
 
   issueAccessToken(user: AuthenticatedUser): Promise<string> {
-    const payload: Omit<AccessTokenPayload, 'sub'> = {
+    const payload: Omit<AccessTokenPayload, 'sub' | 'iat'> = {
       typ: 'access',
       email: user.email,
       isPlatformAdmin: user.isPlatformAdmin,
@@ -91,6 +97,10 @@ export class JwtTokenService implements TokenIssuer, AccessTokenVerifier {
   async verifyAccessToken(token: string): Promise<AuthenticatedUser | null> {
     const payload = await this.verify<AccessTokenPayload>(token, this.config.jwt.accessSecret);
     if (payload?.typ !== 'access') {
+      return null;
+    }
+    // A password reset ends every session opened before it, the access tokens already out included
+    if (await this.revocations.isRevokedFor(payload.sub, new Date(payload.iat * 1000))) {
       return null;
     }
     return {

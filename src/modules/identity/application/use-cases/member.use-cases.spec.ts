@@ -100,17 +100,22 @@ describe('RegisterMemberUseCase', () => {
     expect(first.temporaryPassword).not.toBe(second.temporaryPassword);
   });
 
-  it.each([Role.ADMIN, Role.GUARDIAN])(
-    'forbids an Institution Admin from registering a %s',
-    async (role) => {
-      const { register, users } = setup();
+  it('forbids an Institution Admin from registering another Institution Admin', async () => {
+    const { register, users } = setup();
 
-      await expect(register.execute({ ...student, role })).rejects.toBeInstanceOf(
-        MemberRoleNotAllowedException,
-      );
-      expect(users.users.size).toBe(0);
-    },
-  );
+    await expect(register.execute({ ...student, role: Role.ADMIN })).rejects.toBeInstanceOf(
+      MemberRoleNotAllowedException,
+    );
+    expect(users.users.size).toBe(0);
+  });
+
+  it('lets an Institution Admin register a Guardian, who must pass the ID check like everyone else', async () => {
+    const { register, members } = setup();
+
+    await register.execute({ ...student, role: Role.GUARDIAN });
+
+    expect(members.members[0]).toMatchObject({ role: Role.GUARDIAN, isActive: false });
+  });
 
   describe('the registration hierarchy', () => {
     const staff: AuthenticatedUser = {
@@ -124,12 +129,12 @@ describe('RegisterMemberUseCase', () => {
 
     it('lets each level register only the levels below it', () => {
       expect(allowedFor(platformAdmin)).toEqual([
-        Role.ADMIN, Role.COORDINATOR, Role.TEACHER, Role.STAFF, Role.STUDENT,
+        Role.ADMIN, Role.COORDINATOR, Role.TEACHER, Role.STAFF, Role.GUARDIAN, Role.STUDENT,
       ]);
       expect(allowedFor(institutionAdmin)).toEqual([
-        Role.COORDINATOR, Role.TEACHER, Role.STAFF, Role.STUDENT,
+        Role.COORDINATOR, Role.TEACHER, Role.STAFF, Role.GUARDIAN, Role.STUDENT,
       ]);
-      expect(allowedFor(staff)).toEqual([Role.STUDENT]);
+      expect(allowedFor(staff)).toEqual([Role.GUARDIAN, Role.STUDENT]);
     });
 
     it.each([Role.TEACHER, Role.STUDENT, Role.COORDINATOR, Role.GUARDIAN])(
@@ -159,7 +164,7 @@ describe('RegisterMemberUseCase', () => {
         ],
       };
 
-      expect(allowedFor(actor)).toEqual([Role.STUDENT]);
+      expect(allowedFor(actor)).toEqual([Role.GUARDIAN, Role.STUDENT]);
       expect(allowedFor(actor, 'other-institution')).toContain(Role.TEACHER);
       expect(allowedFor(actor, 'a-third-institution')).toEqual([]);
     });

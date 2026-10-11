@@ -38,12 +38,27 @@ describe('Password reset (HTTP)', () => {
     await browser.post('/auth/login').send({ email: EMAIL, password: TEST_PASSWORD }).expect(200);
     await browser.post('/auth/refresh').expect(200);
 
+    const signedIn = await login(TEST_PASSWORD).expect(200);
+    const oldAccessToken = signedIn.body.accessToken as string;
+    const me = (token: string) => request(ctx.server).get('/auth/me').set('Authorization', `Bearer ${token}`);
+    await me(oldAccessToken).expect(200);
+    // Tokens carry whole seconds: let one pass, so the reset clearly comes after these sessions
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+
     await forgot(EMAIL).expect(204);
     const token = await emailedToken();
     expect(ctx.emails.sent[0]).toMatchObject({ to: EMAIL, subject: 'Restablece tu contraseña de Everlearn' });
     await reset(token, NEW_PASSWORD).expect(204);
 
-    await login(NEW_PASSWORD).expect(200);
+    // Every session open before the reset is over at once: the access token and the refresh cookie
+    await me(oldAccessToken).expect(401);
+    await browser.post('/auth/refresh').expect(401);
+    // And the owner is told
+    expect(ctx.emails.sent[1]).toMatchObject({ to: EMAIL, subject: 'Tu contraseña de Everlearn fue cambiada' });
+    expect(ctx.emails.sent[1].text).not.toContain(NEW_PASSWORD);
+
+    const fresh = await login(NEW_PASSWORD).expect(200);
+    await me(fresh.body.accessToken as string).expect(200);
     await login(TEST_PASSWORD).expect(401);
     // The link worked once
     const again = await reset(token, 'yet-another-password').expect(400);

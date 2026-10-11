@@ -4,6 +4,7 @@ import { attendanceRate, attendanceRisk } from '../../../attendance/domain/atten
 import {
   gradeDistribution,
   today,
+  type AcademicOverview,
   type InstitutionDashboard,
   type PlatformDashboard,
   type TeacherDashboard,
@@ -39,6 +40,22 @@ export class GetInstitutionDashboardUseCase {
       const counts = await this.queries.institution(institutionId, today(this.now()));
       return { ...counts, attendanceRate: attendanceRate(counts.attendance) };
     });
+  }
+}
+
+export class GetAcademicOverviewUseCase {
+  constructor(
+    private readonly queries: DashboardQueries,
+    private readonly cache: DashboardCache,
+    private readonly cacheSeconds: number,
+    private readonly now: Clock = () => new Date(),
+  ) {}
+
+  /** The teaching of an institution right now, for whoever oversees it. Kept for a short while, per institution. */
+  execute(institutionId: string): Promise<AcademicOverview> {
+    return this.cache.remember(`academic:${institutionId}`, this.cacheSeconds, () =>
+      this.queries.academic(institutionId, today(this.now())),
+    );
   }
 }
 

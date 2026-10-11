@@ -17,6 +17,7 @@ import {
   NOTIFICATION_REPOSITORY,
   REMINDER_QUERIES,
 } from '../../src/modules/notifications/domain/ports/notification.ports.js';
+import { GUARDIAN_REPOSITORY } from '../../src/modules/guardians/domain/ports/guardian.ports.js';
 import { PASSWORD_RESET_TOKENS } from '../../src/modules/identity/domain/ports/password-reset-tokens.js';
 import { EMAIL_PROVIDER } from '../../src/shared/domain/email/email-provider.js';
 import { MockLLMProvider } from '../../src/modules/ai/infrastructure/mock-llm.provider.js';
@@ -67,6 +68,7 @@ import {
   RecordingEmailProvider,
 } from './communication.fakes.js';
 import { InMemoryEvaluationRepository } from './evaluation.fakes.js';
+import { InMemoryGuardianRepository } from './guardian.fakes.js';
 import {
   InMemoryGroupRepository,
   InMemoryMemberDirectory,
@@ -166,6 +168,25 @@ export async function createTestApp(extraControllers: Type[] = [], options: Test
     }
     return [...contacts.values()];
   };
+  const guardians = new InMemoryGuardianRepository();
+  guardians.lookupMember = (membershipId) => {
+    const member = members.members.find((candidate) => candidate.membershipId === membershipId);
+    const user = member && users.users.get(member.userId);
+    return (
+      member &&
+      user && {
+        membershipId,
+        institutionId: member.institutionId,
+        role: member.role,
+        firstName: user.firstName,
+        lastName: user.lastName,
+      }
+    );
+  };
+  guardians.lookupGroups = (studentMembershipId) =>
+    groups.rows
+      .filter((group) => group.studentIds.includes(studentMembershipId))
+      .map((group) => ({ id: group.id, name: group.name }));
   const userOf = (membershipId: string) =>
     members.members.find((member) => member.membershipId === membershipId)?.userId ?? membershipId;
   messages.lookupGroups = (institutionId) =>
@@ -175,6 +196,10 @@ export async function createTestApp(extraControllers: Type[] = [], options: Test
         teacherUserIds: [...group.teachers.values()].map(userOf),
         studentUserIds: group.studentIds.map(userOf),
       }));
+  messages.lookupLinks = (institutionId) =>
+    guardians.links
+      .filter((link) => link.institutionId === institutionId)
+      .map((link) => ({ guardianUserId: userOf(link.guardianId), studentUserId: userOf(link.studentId) }));
 
   const fakes = {
     users,
@@ -193,6 +218,7 @@ export async function createTestApp(extraControllers: Type[] = [], options: Test
     emails: new RecordingEmailProvider(),
     reminders: new InMemoryReminderQueries(),
     messages,
+    guardians,
     google: new FakeGoogleGateway(),
     revocations: new InMemoryRefreshTokenRevocations(),
     resetTokens: new InMemoryPasswordResetTokens(),
@@ -277,6 +303,8 @@ export async function createTestApp(extraControllers: Type[] = [], options: Test
     .useValue(fakes.reminders)
     .overrideProvider(MESSAGE_REPOSITORY)
     .useValue(fakes.messages)
+    .overrideProvider(GUARDIAN_REPOSITORY)
+    .useValue(fakes.guardians)
     .overrideProvider(DASHBOARD_QUERIES)
     .useValue(fakes.dashboards)
     .overrideProvider(DASHBOARD_CACHE)

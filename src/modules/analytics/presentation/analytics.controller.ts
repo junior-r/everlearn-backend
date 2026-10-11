@@ -8,11 +8,17 @@ import {
   Roles,
 } from '../../../shared/presentation/decorators/auth.decorators.js';
 import {
+  GetAcademicOverviewUseCase,
   GetInstitutionDashboardUseCase,
   GetPlatformDashboardUseCase,
   GetTeacherDashboardUseCase,
 } from '../application/use-cases/dashboard.use-cases.js';
-import type { InstitutionDashboard, PlatformDashboard, TeacherDashboard } from '../domain/dashboards.js';
+import type {
+  AcademicOverview,
+  InstitutionDashboard,
+  PlatformDashboard,
+  TeacherDashboard,
+} from '../domain/dashboards.js';
 
 /** Read-only figures for each role's dashboard. */
 @Controller('analytics')
@@ -21,6 +27,7 @@ export class AnalyticsController {
     @Inject(GetPlatformDashboardUseCase) private readonly platformDashboard: GetPlatformDashboardUseCase,
     @Inject(GetInstitutionDashboardUseCase) private readonly institutionDashboard: GetInstitutionDashboardUseCase,
     @Inject(GetTeacherDashboardUseCase) private readonly teacherDashboard: GetTeacherDashboardUseCase,
+    @Inject(GetAcademicOverviewUseCase) private readonly academicOverview: GetAcademicOverviewUseCase,
   ) {}
 
   @Get('platform')
@@ -29,8 +36,15 @@ export class AnalyticsController {
     return this.platformDashboard.execute();
   }
 
+  // A Principal oversees the teaching, so they read the same figures as the Institution Admin
+  @Get('academic')
+  @Roles(Role.ADMIN, Role.COORDINATOR)
+  academic(@CurrentInstitutionId() institutionId: string): Promise<AcademicOverview> {
+    return this.academicOverview.execute(institutionId);
+  }
+
   @Get('institution')
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.COORDINATOR)
   institution(@CurrentInstitutionId() institutionId: string): Promise<InstitutionDashboard> {
     return this.institutionDashboard.execute(institutionId);
   }

@@ -32,6 +32,6 @@ import { EvaluationsController } from './presentation/evaluations.controller.js'
     useCaseProvider(ListDueEvaluationsUseCase, [EVALUATION_REPOSITORY]),
   ],
   // The AI assistant reads grades through the same use cases as the Student and the Teacher do
-  exports: [GetMyProgressUseCase, GetGradebookUseCase],
+  exports: [GetMyProgressUseCase, GetGradebookUseCase, ListDueEvaluationsUseCase],
 })
 export class EvaluationsModule {}

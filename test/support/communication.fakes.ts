@@ -193,9 +193,13 @@ export class InMemoryMessageRepository implements MessageRepository {
   readonly members = new Map<string, Contact[]>();
   /** The groups of each institution. */
   readonly groups = new Map<string, TaughtGroup[]>();
+  /** Who answers for whom, in each institution. */
+  readonly guardianLinks = new Map<string, Array<{ guardianUserId: string; studentUserId: string }>>();
   /** Stand in for the membership and enrollment lookups of the Prisma adapter. */
   lookupMembers: (institutionId: string) => Contact[] = (id) => this.members.get(id) ?? [];
   lookupGroups: (institutionId: string) => TaughtGroup[] = (id) => this.groups.get(id) ?? [];
+  lookupLinks: (institutionId: string) => Array<{ guardianUserId: string; studentUserId: string }> = (id) =>
+    this.guardianLinks.get(id) ?? [];
   private clock = 0;
 
   private within(institutionId: string, fromUserId: string, reach: Reach, to: Contact): boolean {
@@ -206,7 +210,13 @@ export class InMemoryMessageRepository implements MessageRepository {
     const isStudent = to.roles.includes('STUDENT');
     const teaches = (teacher: string, student: string) =>
       groups.some((group) => group.teacherUserIds.includes(teacher) && group.studentUserIds.includes(student));
+    const links = this.lookupLinks(institutionId);
+    /** Whether `teacher` teaches a ward of `guardian` now. */
+    const teachesWardOf = (teacher: string, guardian: string) =>
+      links.some((link) => link.guardianUserId === guardian && teaches(teacher, link.studentUserId));
     return (
+      (reach.wardsTeachers && to.roles.includes('TEACHER') && teachesWardOf(to.userId, fromUserId)) ||
+      (reach.studentsGuardians && to.roles.includes('GUARDIAN') && teachesWardOf(fromUserId, to.userId)) ||
       (reach.ownStudents && isStudent && teaches(fromUserId, to.userId)) ||
       (reach.ownTeachers && to.roles.includes('TEACHER') && teaches(to.userId, fromUserId)) ||
       (reach.groupMates &&

@@ -52,5 +52,7 @@ import { SchedulingController } from './presentation/scheduling.controller.js';
     ]),
     useCaseProvider(RemoveScheduleSlotUseCase, [SCHEDULE_REPOSITORY]),
   ],
+  // A Guardian reads their ward's timetable through the same use case as the office
+  exports: [GetGroupScheduleUseCase],
 })
 export class SchedulingModule {}

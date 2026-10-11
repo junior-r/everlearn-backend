@@ -20,7 +20,8 @@ Three read-only endpoints, one per role, that return the figures a dashboard sho
 ## The Implementation
 
 - **`GET /analytics/platform`** (`@PlatformAdminOnly`): `activeInstitutions`, `inactiveInstitutions`, `totalUsers`, `usersByStatus`, `pendingReviews` (applications in `NEEDS_REVIEW`, every institution), `largestInstitutions` (top 5 active, by active members).
-- **`GET /analytics/institution`** (`@Roles(ADMIN)`, institution from `x-institution-id`): `activeStudents`, `teachers`, `activeGroups`, `pendingReviews`, `attendance` (records by mark) and `attendanceRate` (percent, `null` without records).
+- **`GET /analytics/institution`** (`@Roles(ADMIN, COORDINATOR)`, institution from `x-institution-id`): `activeStudents`, `teachers`, `activeGroups`, `pendingReviews`, `attendance` (records by mark) and `attendanceRate` (percent, `null` without records).
+- **`GET /analytics/academic`** (`@Roles(ADMIN, COORDINATOR)`): the teaching right now, for whoever oversees it: `groups` of running periods (students, subjects, subjects without a Teacher, weekly hours in the timetable), every `pensum` (subjects, active groups) and each Teacher's load (`courses`, `weeklyHours`). Cached like the institution's figures. A Principal may also read `GET /analytics/institution`.
 - **`GET /analytics/teacher`** (`@Roles(TEACHER)`): `activeCourses`, `draftEvaluations`, `studentsAtRisk` (below 70% in the Teacher's own classes, lowest first, with their group), `gradeDistribution` (five bands of the 0 to 100 scale) and `gradedAverages`. Only the memberships the caller holds as Teacher in that institution are used.
 - **Layers:** `domain/dashboards.ts` (shapes, `gradeDistribution`, `today`), `domain/ports` (`DashboardQueries`, `DashboardCache`, `CourseAverages`), `application/use-cases/dashboard.use-cases.ts`, `infrastructure/` (`PrismaDashboardQueries`, `RedisDashboardCache`, `GradebookCourseAverages`), `presentation/analytics.controller.ts`.
 - **Index:** `OnboardingApplication(status)` was added for the platform-wide count of pending reviews (migration `20261011190000_pending_reviews_index`). The other counts use indexes that already existed (`Membership(institutionId, role)`, `Group(institutionId)`, `Course(teacherId)`, `AttendanceRecord(enrollmentId)`).
@@ -31,5 +32,5 @@ Three read-only endpoints, one per role, that return the figures a dashboard sho
 - A cached figure can be up to 30 seconds old; nothing invalidates it when a member is registered or attendance is taken.
 - The institution's attendance count joins records to their institution through session, course and group; it has not been measured on a large table. Locally the platform query takes about 20 ms uncached.
 - The Teacher's distribution opens one gradebook per course. That is fine for a handful of courses and would need a single query for dozens.
-- Principals, Staff, Students and Guardians have no endpoint here. The Student's page is built from `GET /evaluations/progress`.
+- Staff, Students and Guardians have no endpoint here. A Principal reads; they cannot change groups, pensums or timetables. The Student's page is built from `GET /evaluations/progress`.
 - Running periods are decided on the UTC date.

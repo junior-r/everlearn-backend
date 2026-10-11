@@ -75,13 +75,16 @@ export class ResetPasswordUseCase {
     private readonly tokens: PasswordResetTokens,
     private readonly hasher: PasswordHasher,
     private readonly revocations: RefreshTokenRevocations,
+    private readonly emails: EmailProvider,
     private readonly now: () => Date = () => new Date(),
+    private readonly onEmailFailure: (error: unknown) => void = () => undefined,
   ) {}
 
   /**
    * Sets a new password for the account a reset token was issued for. The token
-   * is spent, and every session the account had open is closed: whoever asked
-   * for the reset may have done so because someone else was signed in.
+   * is spent, and every session the account had open is closed, access tokens
+   * included: whoever asked for the reset may have done so because someone
+   * else was signed in. The owner is told by email, in case it was not them.
    */
   async execute(token: string, newPassword: string): Promise<void> {
     const userId = await this.tokens.consume(token);
@@ -91,5 +94,21 @@ export class ResetPasswordUseCase {
     }
     await this.users.setPassword(user.id, await this.hasher.hash(newPassword));
     await this.revocations.revokeAllFor(user.id, this.now());
+    // The password is already changed; an email that cannot be sent must not say otherwise
+    await this.emails
+      .send({
+        to: user.email,
+        subject: 'Tu contraseña de Everlearn fue cambiada',
+        text: [
+          `Hola, ${user.firstName}:`,
+          '',
+          'La contraseña de tu cuenta acaba de cambiarse y se cerraron todas tus sesiones abiertas.',
+          'Si fuiste tú, no tienes que hacer nada más.',
+          'Si no fuiste tú, restablece tu contraseña de inmediato desde la pantalla de inicio de sesión y avisa a tu institución.',
+          '',
+          'Everlearn',
+        ].join('\n'),
+      })
+      .catch(this.onEmailFailure);
   }
 }

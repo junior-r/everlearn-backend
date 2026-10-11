@@ -84,8 +84,12 @@ const resetLogger = new Logger('PasswordReset');
         tokens: PasswordResetTokens,
         hasher: PasswordHasher,
         revocations: RefreshTokenRevocations,
-      ) => new ResetPasswordUseCase(users, tokens, hasher, revocations),
-      inject: [USER_REPOSITORY, PASSWORD_RESET_TOKENS, PASSWORD_HASHER, REFRESH_TOKEN_REVOCATIONS],
+        emails: EmailProvider,
+      ) =>
+        new ResetPasswordUseCase(users, tokens, hasher, revocations, emails, undefined, (error) =>
+          resetLogger.error(`Password change email not sent: ${error instanceof Error ? error.message : String(error)}`),
+        ),
+      inject: [USER_REPOSITORY, PASSWORD_RESET_TOKENS, PASSWORD_HASHER, REFRESH_TOKEN_REVOCATIONS, EMAIL_PROVIDER],
     },
     { provide: TOKEN_ISSUER, useExisting: JwtTokenService },
     { provide: ACCESS_TOKEN_VERIFIER, useExisting: JwtTokenService },

@@ -15,14 +15,16 @@ export interface Member {
   isActive: boolean;
 }
 
-const INSTITUTION_STAFF: Role[] = [Role.COORDINATOR, Role.TEACHER, Role.STAFF, Role.STUDENT];
+const INSTITUTION_STAFF: Role[] = [Role.COORDINATOR, Role.TEACHER, Role.STAFF, Role.GUARDIAN, Role.STUDENT];
+/** Staff enrol Students, and with them the Guardians who answer for them. */
+const REGISTERED_BY_STAFF: Role[] = [Role.GUARDIAN, Role.STUDENT];
 
 /**
  * Who may register whom. Each level appoints only the levels below it, so
  * nobody can create a peer or promote themselves:
  * Platform Admin → Institution Admins (and everyone below);
- * Institution Admin → Directivos, Teachers, Staff and Students;
- * Staff → Students.
+ * Institution Admin → Directivos, Teachers, Staff, Students and Guardians;
+ * Staff → Students and Guardians.
  */
 export function registrableRoles(actor: AuthenticatedUser, institutionId: string): Role[] {
   if (actor.isPlatformAdmin) {
@@ -34,7 +36,7 @@ export function registrableRoles(actor: AuthenticatedUser, institutionId: string
   if (roles.includes(Role.ADMIN)) {
     return INSTITUTION_STAFF;
   }
-  return roles.includes(Role.STAFF) ? [Role.STUDENT] : [];
+  return roles.includes(Role.STAFF) ? REGISTERED_BY_STAFF : [];
 }
 
 export function assertCanRegister(
