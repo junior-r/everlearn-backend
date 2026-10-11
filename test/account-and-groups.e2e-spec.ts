@@ -73,9 +73,10 @@ describe('Account security, multi-institution membership and groups (HTTP)', () 
         .expect(200);
       expect(changed.body.user.mustChangePassword).toBe(false);
 
-      // The new token is unrestricted; the old one stays locked until it expires
+      // The new token is unrestricted. The old one is locked, or already refused: it is revoked unless issued in this same second
       await as(changed.body.accessToken as string).get('/onboarding/application').expect(200);
-      await restricted.get('/onboarding/application').expect(403);
+      expect([401, 403]).toContain((await restricted.get('/onboarding/application')).status);
+      expect(String(changed.headers['set-cookie'])).toContain('HttpOnly');
 
       await request(ctx.server)
         .post('/auth/login')

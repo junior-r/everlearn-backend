@@ -11,7 +11,7 @@ import {
 import { registrableRoles } from '../../domain/member.js';
 import { EnsurePlatformAdminUseCase } from './ensure-platform-admin.use-case.js';
 import { LoginWithPasswordUseCase } from './login-with-password.use-case.js';
-import { ListMembersUseCase, RegisterMemberUseCase } from './member.use-cases.js';
+import { ListMembersUseCase, RegisterMemberUseCase, SearchMembersUseCase } from './member.use-cases.js';
 
 const INSTITUTION = 'inst-1';
 
@@ -328,6 +328,73 @@ describe('ListMembersUseCase', () => {
     const listed = await new ListMembersUseCase(members).execute(INSTITUTION);
 
     expect(listed.map((member) => member.email)).toEqual(['grace@example.com']);
+  });
+});
+
+describe('SearchMembersUseCase', () => {
+  async function school() {
+    const ctx = setup();
+    const add = async (firstName: string, lastName: string, role: Role, institutionId = INSTITUTION) =>
+      (
+        await ctx.register.execute({
+          ...student,
+          actor: platformAdmin,
+          email: `${firstName}.${lastName}.${institutionId}@example.com`.toLowerCase(),
+          firstName,
+          lastName,
+          role,
+          institutionId,
+        })
+      ).member;
+    const grace = await add('Grace', 'Hopper', Role.STUDENT);
+    await add('Graciela', 'Hopkins', Role.STUDENT);
+    await add('Grace', 'Kelly', Role.GUARDIAN);
+    await add('Grace', 'Hopper', Role.STUDENT, 'inst-2');
+    ctx.members.documentNumbers.set(grace.userId, 'V-12345678');
+    const search = new SearchMembersUseCase(ctx.members);
+    const names = async (role: Role, query: string, institutionId = INSTITUTION) =>
+      (await search.execute(institutionId, role, query)).map((match) => `${match.firstName} ${match.lastName}`);
+    return { ...ctx, grace, search, names };
+  }
+
+  it('finds members of the role by any part of their name, whatever the case, in their own institution', async () => {
+    const { names } = await school();
+
+    expect(await names(Role.STUDENT, 'gra')).toEqual(['Graciela Hopkins', 'Grace Hopper']);
+    expect(await names(Role.STUDENT, '  HOPPER grace ')).toEqual(['Grace Hopper']);
+    expect(await names(Role.GUARDIAN, 'grace')).toEqual(['Grace Kelly']);
+    expect(await names(Role.STUDENT, 'kelly')).toEqual([]);
+  });
+
+  it('finds a member by their document number and returns it, to tell namesakes apart', async () => {
+    const { search, grace } = await school();
+
+    expect(await search.execute(INSTITUTION, Role.STUDENT, '12345')).toEqual([
+      {
+        membershipId: grace.membershipId,
+        firstName: 'Grace',
+        lastName: 'Hopper',
+        email: grace.email,
+        documentNumber: 'V-12345678',
+      },
+    ]);
+  });
+
+  it('lists nobody for a search too short to mean anything, and never more than a few', async () => {
+    const { names, register } = await school();
+    for (let index = 0; index < 12; index += 1) {
+      await register.execute({
+        ...student,
+        actor: platformAdmin,
+        email: `clone${index}@example.com`,
+        firstName: 'Clon',
+        lastName: `Número ${String(index).padStart(2, '0')}`,
+      });
+    }
+
+    expect(await names(Role.STUDENT, ' g ')).toEqual([]);
+    expect(await names(Role.STUDENT, '')).toEqual([]);
+    expect(await names(Role.STUDENT, 'clon')).toHaveLength(10);
   });
 });
 

@@ -11,7 +11,7 @@ import {
   InstitutionNotFoundException,
   MemberAlreadyRegisteredException,
 } from '../../src/modules/identity/domain/exceptions/identity.exceptions.js';
-import type { Member } from '../../src/modules/identity/domain/member.js';
+import type { Member, MemberMatch } from '../../src/modules/identity/domain/member.js';
 import type {
   GoogleIdentity,
   GoogleOAuthGateway,
@@ -164,6 +164,8 @@ export type StoredMember = Member & { institutionId: string };
 /** Shares its users with InMemoryUserRepository, so a registered member can then sign in. */
 export class InMemoryMemberRepository implements MemberRepository {
   readonly members: StoredMember[] = [];
+  /** User id → the document number on their profile. */
+  readonly documentNumbers = new Map<string, string>();
   /** When set, registering into any other institution fails as it would for a missing row. */
   knownInstitutionIds: Set<string> | null = null;
 
@@ -199,6 +201,29 @@ export class InMemoryMemberRepository implements MemberRepository {
     return Promise.resolve(
       this.store(membership.userId, membership.institutionId, membership.role, membership.activate),
     );
+  }
+
+  search(institutionId: string, role: Role, terms: string[], limit: number): Promise<MemberMatch[]> {
+    const matches = this.members
+      .filter((member) => member.institutionId === institutionId && member.role === role)
+      .map((member) => ({ ...this.toMember(member), documentNumber: this.documentNumbers.get(member.userId) ?? null }))
+      .filter((member) =>
+        terms.every((term) =>
+          [member.firstName, member.lastName, member.documentNumber ?? ''].some((value) =>
+            value.toLowerCase().includes(term.toLowerCase()),
+          ),
+        ),
+      )
+      .sort((a, b) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName))
+      .slice(0, limit)
+      .map(({ membershipId, firstName, lastName, email, documentNumber }) => ({
+        membershipId,
+        firstName,
+        lastName,
+        email,
+        documentNumber,
+      }));
+    return Promise.resolve(matches);
   }
 
   listByInstitution(institutionId: string): Promise<Member[]> {

@@ -10,7 +10,8 @@ import {
   InstitutionNotFoundException,
   MemberAlreadyRegisteredException,
 } from '../../domain/exceptions/identity.exceptions.js';
-import type { Member } from '../../domain/member.js';
+import type { Role } from '../../../../shared/domain/auth/role.js';
+import type { Member, MemberMatch } from '../../domain/member.js';
 import type {
   MemberRepository,
   NewMember,
@@ -116,6 +117,42 @@ export class PrismaMemberRepository implements MemberRepository {
         orderBy: [{ user: { lastName: 'asc' } }, { user: { firstName: 'asc' } }],
       });
       return rows.map(toMember);
+    });
+  }
+
+  search(institutionId: string, role: Role, terms: string[], limit: number): Promise<MemberMatch[]> {
+    return runQuery(this.logger, async () => {
+      const contains = (term: string) => ({ contains: term, mode: 'insensitive' as const });
+      const rows = await this.prisma.membership.findMany({
+        where: {
+          institutionId,
+          role,
+          AND: terms.map((term) => ({
+            user: {
+              OR: [
+                { firstName: contains(term) },
+                { lastName: contains(term) },
+                { profile: { documentNumber: contains(term) } },
+              ],
+            },
+          })),
+        },
+        select: {
+          id: true,
+          user: {
+            select: { firstName: true, lastName: true, email: true, profile: { select: { documentNumber: true } } },
+          },
+        },
+        orderBy: [{ user: { lastName: 'asc' } }, { user: { firstName: 'asc' } }, { id: 'asc' }],
+        take: limit,
+      });
+      return rows.map(({ id, user }) => ({
+        membershipId: id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        documentNumber: user.profile?.documentNumber ?? null,
+      }));
     });
   }
 }

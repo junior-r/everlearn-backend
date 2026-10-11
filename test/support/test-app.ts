@@ -196,6 +196,8 @@ export async function createTestApp(extraControllers: Type[] = [], options: Test
         teacherUserIds: [...group.teachers.values()].map(userOf),
         studentUserIds: group.studentIds.map(userOf),
       }));
+  notifications.lookupGuardians = (studentMembershipId) =>
+    guardians.links.filter((link) => link.studentId === studentMembershipId).map((link) => userOf(link.guardianId));
   messages.lookupLinks = (institutionId) =>
     guardians.links
       .filter((link) => link.institutionId === institutionId)
@@ -342,6 +344,11 @@ export async function createTestApp(extraControllers: Type[] = [], options: Test
       .send({ currentPassword: temporaryPassword, newPassword: TEST_PASSWORD });
     if (response.status !== 200) {
       throw new Error('Password change failed for ' + email + ': ' + response.status);
+    }
+    // This change is setup: its "password changed" email is not one a test should find
+    const told = fakes.emails.sent.findLastIndex((sent) => sent.to === email);
+    if (told >= 0) {
+      fakes.emails.sent.splice(told, 1);
     }
     return (response.body as { accessToken: string }).accessToken;
   }

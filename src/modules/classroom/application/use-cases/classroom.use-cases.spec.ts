@@ -5,6 +5,7 @@ import {
   FakeVideoTokenIssuer,
   InMemoryClassroomRepository,
 } from '../../../../../test/support/classroom.fakes.js';
+import { RecordingNotifier } from '../../../../../test/support/communication.fakes.js';
 import {
   InMemoryGroupRepository,
   InMemoryMemberDirectory,
@@ -51,6 +52,7 @@ function setup() {
   );
   const classroom = new InMemoryClassroomRepository(groups, directory);
   const tokens = new FakeVideoTokenIssuer();
+  const notifier = new RecordingNotifier();
   const claim = (institutionId: string, role: Role, firstName: string): MembershipClaim => ({
     id: directory.add(institutionId, role, firstName, 'Prueba').membershipId,
     institutionId,
@@ -78,6 +80,7 @@ function setup() {
   return {
     classroom,
     tokens,
+    notifier,
     groupId,
     alan,
     emmy,
@@ -87,7 +90,7 @@ function setup() {
     open,
     list: new ListMyCoursesUseCase(classroom),
     issue: new IssueClassroomTokenUseCase(classroom, tokens),
-    lifecycle: new RecordRoomLifecycleUseCase(classroom),
+    lifecycle: new RecordRoomLifecycleUseCase(classroom, notifier),
     participation: new RecordParticipationUseCase(classroom),
     chat: new RecordChatMessageUseCase(classroom),
     transcript: new RecordTranscriptSegmentUseCase(classroom),
@@ -365,6 +368,40 @@ describe('recording a live class', () => {
     await ctx.lifecycle.finished(sessionId, at(100));
 
     expect(ctx.classroom.attendance.size).toBe(0);
+  });
+
+  it('tells the Guardians of a Student marked absent or late, and of nobody who attended', async () => {
+    const absent = await attendanceAfter();
+    expect(absent.ctx.notifier.requests).toEqual([
+      {
+        recipient: { guardiansOf: absent.ctx.grace.id },
+        institutionId: A,
+        type: 'WARD_ATTENDANCE',
+        data: {
+          studentName: 'Grace Prueba',
+          subjectName: MATH,
+          groupName: '1ro A',
+          status: 'ABSENT',
+          date: at(0).toISOString(),
+        },
+        dedupeKey: `attendance:${absent.sessionId}:${absent.ctx.grace.id}`,
+      },
+    ]);
+
+    const late = await attendanceAfter([0, 50]);
+    expect(late.ctx.notifier.requests.map((request) => request.data.status)).toEqual(['LATE']);
+
+    expect((await attendanceAfter([0, 90])).ctx.notifier.requests).toEqual([]);
+  });
+
+  it('does not announce an absence a person already settled by hand', async () => {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+    ctx.classroom.manualAttendance.add(`${sessionId}:${ctx.grace.id}`);
+
+    await ctx.lifecycle.finished(sessionId, at(100));
+
+    expect(ctx.notifier.requests).toEqual([]);
   });
 
   it('closes the connections still open when the room finishes', async () => {

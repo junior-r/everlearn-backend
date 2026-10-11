@@ -91,7 +91,15 @@ export interface TimeSpan {
 /** A finished class and the connections of every Student enrolled in its group. */
 export interface RollCall {
   session: TimeSpan;
-  students: { enrollmentId: string; connections: TimeSpan[] }[];
+  /** What the class was, for whoever has to be told about it. */
+  course: { institutionId: string; subjectName: string; groupName: string };
+  students: {
+    enrollmentId: string;
+    membershipId: string;
+    firstName: string;
+    lastName: string;
+    connections: TimeSpan[];
+  }[];
 }
 
 export interface AttendanceMark {

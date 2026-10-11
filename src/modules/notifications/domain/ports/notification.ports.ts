@@ -12,6 +12,8 @@ export interface Addressee {
 export interface NotificationRepository {
   /** The account behind each membership; unknown memberships are left out. */
   usersOf(membershipIds: string[]): Promise<Map<string, string>>;
+  /** The accounts of the active Guardians linked to each Student membership. */
+  guardiansOf(studentMembershipIds: string[]): Promise<Map<string, string[]>>;
   /**
    * Stores the notices and returns only those really added: one whose dedupe
    * key the user already has, or whose collapse key they have unread, is skipped.

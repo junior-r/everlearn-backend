@@ -44,8 +44,11 @@ export interface SessionRecorder {
   leave(participation: Participation, leftAt: Date): Promise<void>;
   /** Resolves to null while the session has not finished. */
   rollCall(sessionId: string): Promise<RollCall | null>;
-  /** Stores automatic attendance, leaving alone any record a person took by hand. */
-  saveAttendance(sessionId: string, marks: AttendanceMark[]): Promise<void>;
+  /**
+   * Stores automatic attendance, leaving alone any record a person took by hand.
+   * Resolves to the marks that now stand as automatic: those are the ones to announce.
+   */
+  saveAttendance(sessionId: string, marks: AttendanceMark[]): Promise<AttendanceMark[]>;
   addChatMessage(message: ChatMessage): Promise<void>;
   addTranscriptSegment(segment: TranscriptSegment): Promise<void>;
 }

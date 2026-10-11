@@ -25,7 +25,7 @@ import { EvaluationsController } from './presentation/evaluations.controller.js'
     useCaseProvider(UpdateEvaluationUseCase, [EVALUATION_REPOSITORY]),
     useCaseProvider(PublishEvaluationUseCase, [EVALUATION_REPOSITORY, NOTIFIER]),
     useCaseProvider(DeleteEvaluationUseCase, [EVALUATION_REPOSITORY]),
-    useCaseProvider(RecordGradesUseCase, [EVALUATION_REPOSITORY]),
+    useCaseProvider(RecordGradesUseCase, [EVALUATION_REPOSITORY, NOTIFIER]),
     useCaseProvider(GetGradebookUseCase, [EVALUATION_REPOSITORY]),
     useCaseProvider(ExportGradebookUseCase, [GetGradebookUseCase]),
     useCaseProvider(GetMyProgressUseCase, [EVALUATION_REPOSITORY]),

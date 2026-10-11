@@ -207,6 +207,40 @@ describe('localClock', () => {
   });
 });
 
+describe('telling Guardians', () => {
+  const absence = (guardiansOf: string) => ({
+    recipient: { guardiansOf },
+    institutionId: 'institution-a',
+    type: NotificationType.WARD_ATTENDANCE,
+    data: { studentName: 'Grace Hopper', subjectName: 'Matemática', groupName: '1ro A', status: 'ABSENT', date: '2026-10-12T08:00:00.000Z' },
+    dedupeKey: `attendance:session:${guardiansOf}`,
+  });
+
+  it('gives every Guardian linked to the Student a notice and an email, once', async () => {
+    const ctx = setup();
+    ctx.notifications.guardians.set('m-grace', ['alan', 'linus']);
+
+    await ctx.send.execute([absence('m-grace')]);
+    await ctx.send.execute([absence('m-grace')]);
+
+    expect(ctx.notifications.rows.map((row) => [row.userId, row.type])).toEqual([
+      ['alan', 'WARD_ATTENDANCE'],
+      ['linus', 'WARD_ATTENDANCE'],
+    ]);
+    expect(ctx.emails.sent.map((email) => email.to)).toEqual(['alan@example.com', 'linus@example.com']);
+    expect(ctx.emails.sent[0].subject).toBe('Grace Hopper no asistió a Matemática');
+  });
+
+  it('tells nobody when the Student has no Guardian', async () => {
+    const ctx = setup();
+
+    await ctx.send.execute([absence('m-grace')]);
+
+    expect(ctx.notifications.rows).toEqual([]);
+    expect(ctx.emails.sent).toEqual([]);
+  });
+});
+
 describe('reminders', () => {
   const NOW = new Date('2026-10-12T11:50:00Z');
 

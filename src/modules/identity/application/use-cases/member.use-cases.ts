@@ -3,7 +3,14 @@ import type { AuthenticatedUser } from '../../../../shared/domain/auth/authentic
 import type { Role } from '../../../../shared/domain/auth/role.js';
 import { normalizeEmail, type User } from '../../domain/entities/user.entity.js';
 import { AccountSuspendedException } from '../../domain/exceptions/identity.exceptions.js';
-import { assertCanRegister, requiresOnboarding, type Member } from '../../domain/member.js';
+import {
+  assertCanRegister,
+  MEMBER_SEARCH_LIMIT,
+  requiresOnboarding,
+  searchTerms,
+  type Member,
+  type MemberMatch,
+} from '../../domain/member.js';
 import type { MemberRepository } from '../../domain/ports/member.repository.js';
 import type { PasswordHasher } from '../../domain/ports/password-hasher.js';
 import type { UserRepository } from '../../domain/ports/user.repository.js';
@@ -90,5 +97,17 @@ export class ListMembersUseCase {
 
   execute(institutionId: string): Promise<Member[]> {
     return this.members.listByInstitution(institutionId);
+  }
+}
+
+export class SearchMembersUseCase {
+  constructor(private readonly members: MemberRepository) {}
+
+  /** Finds members of an institution holding a role, by name or document number; a few at a time. */
+  execute(institutionId: string, role: Role, query: string): Promise<MemberMatch[]> {
+    const terms = searchTerms(query);
+    return terms.length === 0
+      ? Promise.resolve([])
+      : this.members.search(institutionId, role, terms, MEMBER_SEARCH_LIMIT);
   }
 }

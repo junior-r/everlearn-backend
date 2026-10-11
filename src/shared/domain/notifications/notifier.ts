@@ -6,15 +6,25 @@ export const NotificationType = {
   EVALUATION_DUE: 'EVALUATION_DUE',
   CLASS_STARTING: 'CLASS_STARTING',
   DIRECT_MESSAGE: 'DIRECT_MESSAGE',
+  /** To a Student: one of their evaluations was graded. */
+  GRADE_POSTED: 'GRADE_POSTED',
+  /** To a Guardian, about a Student they answer for. */
+  WARD_EVALUATION_PUBLISHED: 'WARD_EVALUATION_PUBLISHED',
+  WARD_GRADE_POSTED: 'WARD_GRADE_POSTED',
+  WARD_ATTENDANCE: 'WARD_ATTENDANCE',
 } as const;
 export type NotificationType = (typeof NotificationType)[keyof typeof NotificationType];
 
 /** What a notice is about. The client words it from this, in its own language. */
 export type NotificationData = Record<string, string | number | null>;
 
-/** A notice for one person, named by their account or by one of their memberships. */
+/**
+ * A notice for one person, named by their account or by one of their
+ * memberships, or for every Guardian linked to a Student, named by the
+ * Student's membership. The module asking does not need to know who they are.
+ */
 export interface NotificationRequest {
-  recipient: { userId: string } | { membershipId: string };
+  recipient: { userId: string } | { membershipId: string } | { guardiansOf: string };
   /** The institution the notice comes from; null when it belongs to none. */
   institutionId: string | null;
   type: NotificationType;

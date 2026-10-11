@@ -4,6 +4,7 @@ import type { PasswordHasher } from '../../domain/ports/password-hasher.js';
 import { PASSWORD_RESET_TTL_SECONDS, type PasswordResetTokens } from '../../domain/ports/password-reset-tokens.js';
 import type { RefreshTokenRevocations } from '../../domain/ports/refresh-token-revocations.js';
 import type { UserRepository } from '../../domain/ports/user.repository.js';
+import { passwordChangedEmail } from '../services/password-changed-email.js';
 
 export const RESET_LOCALES = ['es', 'en'] as const;
 export type ResetLocale = (typeof RESET_LOCALES)[number];
@@ -95,20 +96,6 @@ export class ResetPasswordUseCase {
     await this.users.setPassword(user.id, await this.hasher.hash(newPassword));
     await this.revocations.revokeAllFor(user.id, this.now());
     // The password is already changed; an email that cannot be sent must not say otherwise
-    await this.emails
-      .send({
-        to: user.email,
-        subject: 'Tu contraseña de Everlearn fue cambiada',
-        text: [
-          `Hola, ${user.firstName}:`,
-          '',
-          'La contraseña de tu cuenta acaba de cambiarse y se cerraron todas tus sesiones abiertas.',
-          'Si fuiste tú, no tienes que hacer nada más.',
-          'Si no fuiste tú, restablece tu contraseña de inmediato desde la pantalla de inicio de sesión y avisa a tu institución.',
-          '',
-          'Everlearn',
-        ].join('\n'),
-      })
-      .catch(this.onEmailFailure);
+    await this.emails.send(passwordChangedEmail(user)).catch(this.onEmailFailure);
   }
 }

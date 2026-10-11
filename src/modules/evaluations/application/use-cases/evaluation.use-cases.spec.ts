@@ -112,7 +112,7 @@ function setup() {
     published,
     update: new UpdateEvaluationUseCase(repository),
     remove: new DeleteEvaluationUseCase(repository),
-    grade: new RecordGradesUseCase(repository),
+    grade: new RecordGradesUseCase(repository, notifier),
     gradebook,
     progress: new GetMyProgressUseCase(repository),
     due: new ListDueEvaluationsUseCase(repository),
@@ -486,8 +486,14 @@ describe('announcing a published evaluation', () => {
 
     expect(ctx.notifier.requests.map((request) => request.recipient)).toEqual([
       { membershipId: ctx.grace.id },
+      { guardiansOf: ctx.grace.id },
       { membershipId: ctx.linus.id },
+      { guardiansOf: ctx.linus.id },
     ]);
+    expect(ctx.notifier.requests[1]).toMatchObject({
+      type: 'WARD_EVALUATION_PUBLISHED',
+      data: { evaluationId: draft.id, evaluationTitle: 'Examen parcial', studentName: 'Grace Prueba' },
+    });
     expect(ctx.notifier.requests[0]).toMatchObject({
       institutionId: A,
       type: 'EVALUATION_PUBLISHED',
@@ -501,6 +507,54 @@ describe('announcing a published evaluation', () => {
     const told = ctx.notifier.requests.length;
 
     await ctx.publish.execute(ctx.alan.actor, id);
+
+    expect(ctx.notifier.requests).toHaveLength(told);
+  });
+
+  it('tells a Student and their Guardians about a grade, once per score', async () => {
+    const ctx = setup();
+    const { id } = await ctx.published({ maxScore: 20 });
+    const told = ctx.notifier.requests.length;
+    const grades = [
+      { enrollmentId: ctx.grace.id, score: 18, feedback: null },
+      { enrollmentId: ctx.linus.id, score: null, feedback: null },
+    ];
+
+    await ctx.grade.execute(ctx.alan.actor, id, grades);
+
+    const collapseKey = `grade:${id}:${ctx.grace.id}`;
+    expect(ctx.notifier.requests.slice(told)).toMatchObject([
+      {
+        recipient: { membershipId: ctx.grace.id },
+        institutionId: A,
+        type: 'GRADE_POSTED',
+        data: { evaluationId: id, evaluationTitle: 'Examen parcial', score: 18, maxScore: 20 },
+        collapseKey,
+      },
+      {
+        recipient: { guardiansOf: ctx.grace.id },
+        type: 'WARD_GRADE_POSTED',
+        data: { score: 18, maxScore: 20, studentName: 'Grace Prueba' },
+        collapseKey,
+      },
+    ]);
+
+    // The gradebook is saved whole: an untouched score is not news
+    await ctx.grade.execute(ctx.alan.actor, id, grades);
+    expect(ctx.notifier.requests).toHaveLength(told + 2);
+
+    await ctx.grade.execute(ctx.alan.actor, id, [{ enrollmentId: ctx.grace.id, score: 15, feedback: null }]);
+    expect(ctx.notifier.requests).toHaveLength(told + 4);
+  });
+
+  it('tells nobody when grading is refused', async () => {
+    const ctx = setup();
+    const { id } = await ctx.published();
+    const told = ctx.notifier.requests.length;
+
+    await expect(
+      ctx.grade.execute(ctx.emmy.actor, id, [{ enrollmentId: ctx.grace.id, score: 10, feedback: null }]),
+    ).rejects.toBeInstanceOf(NotCourseTeacherException);
 
     expect(ctx.notifier.requests).toHaveLength(told);
   });

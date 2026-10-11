@@ -1,5 +1,5 @@
 import type { Role } from '../../../../shared/domain/auth/role.js';
-import type { Member } from '../member.js';
+import type { Member, MemberMatch } from '../member.js';
 
 export const MEMBER_REPOSITORY = Symbol('MemberRepository');
 
@@ -31,4 +31,9 @@ export interface MemberRepository {
   /** Adds a membership to an existing account. Rejects with MemberAlreadyRegisteredException on a duplicate. */
   addMembership(membership: NewMembership): Promise<Member>;
   listByInstitution(institutionId: string): Promise<Member[]>;
+  /**
+   * The first `limit` members holding `role` whose name or document number
+   * contains every term, ignoring case, by last name.
+   */
+  search(institutionId: string, role: Role, terms: string[], limit: number): Promise<MemberMatch[]>;
 }

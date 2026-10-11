@@ -24,6 +24,7 @@ import { LoginWithPasswordUseCase } from './application/use-cases/login-with-pas
 import { LogoutUseCase } from './application/use-cases/logout.use-case.js';
 import {
   ListMembersUseCase,
+  SearchMembersUseCase,
   RegisterMemberUseCase,
 } from './application/use-cases/member.use-cases.js';
 import { RefreshSessionUseCase } from './application/use-cases/refresh-session.use-case.js';
@@ -107,7 +108,21 @@ const resetLogger = new Logger('PasswordReset');
     useCaseProvider(GetCurrentUserUseCase, [USER_REPOSITORY, SessionIssuer]),
     useCaseProvider(EnsurePlatformAdminUseCase, [USER_REPOSITORY, PASSWORD_HASHER]),
     useCaseProvider(ListMembersUseCase, [MEMBER_REPOSITORY]),
-    useCaseProvider(ChangePasswordUseCase, [USER_REPOSITORY, PASSWORD_HASHER, SessionIssuer]),
+    useCaseProvider(SearchMembersUseCase, [MEMBER_REPOSITORY]),
+    {
+      provide: ChangePasswordUseCase,
+      useFactory: (
+        users: UserRepository,
+        hasher: PasswordHasher,
+        sessions: SessionIssuer,
+        revocations: RefreshTokenRevocations,
+        emails: EmailProvider,
+      ) =>
+        new ChangePasswordUseCase(users, hasher, sessions, revocations, emails, undefined, (error) =>
+          resetLogger.error(`Password change email not sent: ${error instanceof Error ? error.message : String(error)}`),
+        ),
+      inject: [USER_REPOSITORY, PASSWORD_HASHER, SessionIssuer, REFRESH_TOKEN_REVOCATIONS, EMAIL_PROVIDER],
+    },
     useCaseProvider(StartGoogleLinkUseCase, [USER_REPOSITORY, GOOGLE_OAUTH_GATEWAY, TOKEN_ISSUER]),
     useCaseProvider(CompleteGoogleLinkUseCase, [
       USER_REPOSITORY,

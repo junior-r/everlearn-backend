@@ -20,12 +20,14 @@ The office registers Guardians and links each to their Students; a Guardian then
 - **Office endpoints** (`ADMIN`, `STAFF`): `GET /guardian-links`, `PUT /guardian-links` (`{ studentMembershipId, guardianMembershipId, relationship }`; `INVALID_GUARDIAN_LINK` unless they are a Student and a Guardian of the institution), `DELETE /guardian-links/:id`.
 - **Guardian endpoints** (`GUARDIAN`): `GET /guardian/wards` (linked Students with their active groups) and `GET /guardian/wards/:studentMembershipId` (`WARD_NOT_FOUND` unless linked): `schedule`, `courses` (average and graded weight per subject), `upcoming` (evaluations due in the next 30 days) and `attendance` (counts, the rate by the shared rule in `attendance/domain`, and the latest 10 records).
 - **Layers:** `domain/guardian.ts`, ports `GuardianRepository` and `WardAcademics`, `application/use-cases/guardian.use-cases.ts`, adapters `PrismaGuardianRepository` and `ModuleWardAcademics`.
+- **Notifications:** a Guardian is told, in the app and by email, when a ward's evaluation is published or graded and when the ward is marked absent or late (see `notifications-and-messaging.md`).
+- **Finding who to link:** `GET /members/search?role=&query=` (`ADMIN`, `STAFF`) returns at most 10 members of the institution holding that role whose name or document number contains every word typed (2 characters at least), with their email and document number. The rule (`searchTerms`, `MEMBER_SEARCH_LIMIT`) is in `identity/domain/member.ts`.
 - **Messaging:** a Guardian may write to the office and to the Teachers who currently teach a ward, and those Teachers to them (`reachOf`, see `notifications-and-messaging.md`).
 - **Schema:** `GuardianLink` already existed; no migration.
 
 ## Known gaps
 
-- A Guardian gets no notifications about their wards (a new evaluation, a grade, an absence).
+- The member search uses `ILIKE '%term%'` on names and document numbers, which no index serves; it is bounded by institution and role and returns 10 rows, and would need trigram indexes for a very large institution.
 - Attendance shows the latest 10 records only, and the Guardian cannot justify an absence.
 - Links are made one at a time by the office; there is no import, and a Guardian cannot ask to be linked.
 - A Student has no say in who is linked to them, and is not told.

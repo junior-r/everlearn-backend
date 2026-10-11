@@ -238,8 +238,12 @@ export class InMemoryClassroomRepository implements ClassroomRepository, Session
     const group = this.groups.rows.find((row) => row.id === session.groupId);
     return {
       session: { from: session.actualStartedAt ?? session.startsAt, to: endedAt },
+      course: { institutionId: group?.institutionId ?? '', subjectName: session.subjectId, groupName: group?.name ?? '' },
       students: (group?.studentIds ?? []).map((studentId) => ({
         enrollmentId: studentId,
+        membershipId: studentId,
+        firstName: this.directory.describe(studentId).firstName,
+        lastName: this.directory.describe(studentId).lastName,
         connections: this.participations
           .filter((row) => row.sessionId === sessionId && row.membershipId === studentId)
           .map((row) => ({ from: row.joinedAt, to: row.leftAt ?? endedAt })),
@@ -247,13 +251,12 @@ export class InMemoryClassroomRepository implements ClassroomRepository, Session
     };
   }
 
-  async saveAttendance(sessionId: string, marks: AttendanceMark[]): Promise<void> {
-    for (const { enrollmentId, status } of marks) {
-      const key = `${sessionId}:${enrollmentId}`;
-      if (!this.manualAttendance.has(key)) {
-        this.attendance.set(key, status);
-      }
+  async saveAttendance(sessionId: string, marks: AttendanceMark[]): Promise<AttendanceMark[]> {
+    const automatic = marks.filter(({ enrollmentId }) => !this.manualAttendance.has(`${sessionId}:${enrollmentId}`));
+    for (const { enrollmentId, status } of automatic) {
+      this.attendance.set(`${sessionId}:${enrollmentId}`, status);
     }
+    return automatic;
   }
 
   async addChatMessage(message: ChatMessage): Promise<void> {

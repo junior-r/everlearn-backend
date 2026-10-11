@@ -29,12 +29,27 @@ import { RequestPasswordResetUseCase, ResetPasswordUseCase } from './password-re
 import { RefreshSessionUseCase } from './refresh-session.use-case.js';
 import { StartGoogleLoginUseCase } from './start-google-login.use-case.js';
 
+const CHANGED_AT = new Date('2026-10-11T12:00:00Z');
+
 function setup() {
   const fakes = createIdentityFakes();
+  const emails = new RecordingEmailProvider();
+  const emailFailures: unknown[] = [];
   return {
     ...fakes,
+    emails,
+    emailFailures,
     login: new LoginWithPasswordUseCase(fakes.users, fakes.hasher, fakes.sessions),
-    changePassword: new ChangePasswordUseCase(fakes.users, fakes.hasher, fakes.sessions),
+    refresh: new RefreshSessionUseCase(fakes.users, fakes.tokens, fakes.revocations, fakes.sessions),
+    changePassword: new ChangePasswordUseCase(
+      fakes.users,
+      fakes.hasher,
+      fakes.sessions,
+      fakes.revocations,
+      emails,
+      () => CHANGED_AT,
+      (error) => emailFailures.push(error),
+    ),
     startLink: new StartGoogleLinkUseCase(fakes.users, fakes.google, fakes.tokens),
     completeLink: new CompleteGoogleLinkUseCase(fakes.users, fakes.google, fakes.tokens),
     googleLogin: new LoginWithGoogleUseCase(fakes.users, fakes.google, fakes.sessions),
@@ -76,13 +91,50 @@ describe('forced password change', () => {
     await expect(login.execute({ email: user.email, password: 'temp-password-1' })).rejects.toThrow();
   });
 
+  it('closes every other session, keeps the one that made the change and tells the owner', async () => {
+    const ctx = setup();
+    const user = ctx.users.seed({ email: 'grace@example.com', firstName: 'Grace', status: UserStatus.ACTIVE });
+    ctx.tokens.now = () => new Date('2026-10-11T11:00:00Z');
+    const elsewhere = await ctx.login.execute({ email: user.email, password: 'correct-password' });
+    ctx.tokens.now = () => new Date('2026-10-11T12:00:01Z');
+
+    const here = await ctx.changePassword.execute({
+      userId: user.id,
+      currentPassword: 'correct-password',
+      newPassword: 'my-own-password',
+    });
+
+    await expect(ctx.revocations.isRevokedFor(user.id, new Date('2026-10-11T11:00:00Z'))).resolves.toBe(true);
+    await expect(ctx.refresh.execute(elsewhere.refreshToken)).rejects.toBeInstanceOf(InvalidRefreshTokenException);
+    await expect(ctx.refresh.execute(here.refreshToken)).resolves.toBeDefined();
+    expect(ctx.emails.sent).toHaveLength(1);
+    expect(ctx.emails.sent[0]).toMatchObject({ to: 'grace@example.com', subject: 'Tu contraseña de Everlearn fue cambiada' });
+    expect(ctx.emails.sent[0].text).toContain('Hola, Grace:');
+    expect(ctx.emails.sent[0].text).not.toContain('my-own-password');
+  });
+
+  it('still changes the password when the email cannot be sent', async () => {
+    const ctx = setup();
+    const user = ctx.users.seed({ email: 'grace@example.com', status: UserStatus.ACTIVE });
+    ctx.emails.refused.add('grace@example.com');
+
+    await expect(
+      ctx.changePassword.execute({ userId: user.id, currentPassword: 'correct-password', newPassword: 'my-own-password' }),
+    ).resolves.toBeDefined();
+
+    expect(ctx.emailFailures).toHaveLength(1);
+    await expect(ctx.login.execute({ email: user.email, password: 'my-own-password' })).resolves.toBeDefined();
+  });
+
   it('requires the current password, so a stolen session cannot take the account over', async () => {
-    const { users, changePassword } = setup();
+    const { users, changePassword, revocations, emails } = setup();
     const user = users.seed({ mustChangePassword: true });
 
     await expect(
       changePassword.execute({ userId: user.id, currentPassword: 'a-guess', newPassword: 'attacker-password' }),
     ).rejects.toBeInstanceOf(InvalidCurrentPasswordException);
+    await expect(revocations.isRevokedFor(user.id, new Date('2026-10-11T11:00:00Z'))).resolves.toBe(false);
+    expect(emails.sent).toEqual([]);
     const stored = await users.findById(user.id);
     expect(stored?.passwordHash).toBe('hashed:correct-password');
     expect(stored?.mustChangePassword).toBe(true);

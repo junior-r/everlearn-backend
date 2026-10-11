@@ -85,7 +85,9 @@ export class GroupsController {
     return this.listGroups.execute(institutionId);
   }
 
+  // A Principal oversees the teaching: they read a group, and change nothing
   @Get(':id')
+  @Roles(Role.ADMIN, Role.COORDINATOR)
   get(
     @CurrentInstitutionId() institutionId: string,
     @Param('id', ParseUUIDPipe) id: string,

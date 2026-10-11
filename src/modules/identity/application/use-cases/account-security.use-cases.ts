@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import type { EmailProvider } from '../../../../shared/domain/email/email-provider.js';
 import {
   AccountNotActiveException,
   GoogleEmailNotVerifiedException,
@@ -9,9 +10,11 @@ import {
 } from '../../domain/exceptions/identity.exceptions.js';
 import type { GoogleOAuthGateway } from '../../domain/ports/google-oauth.gateway.js';
 import type { PasswordHasher } from '../../domain/ports/password-hasher.js';
+import type { RefreshTokenRevocations } from '../../domain/ports/refresh-token-revocations.js';
 import type { TokenIssuer } from '../../domain/ports/token-issuer.js';
 import type { UserRepository } from '../../domain/ports/user.repository.js';
-import type { AuthUserView } from '../auth-session.js';
+import type { AuthSession } from '../auth-session.js';
+import { passwordChangedEmail } from '../services/password-changed-email.js';
 import type { SessionIssuer } from '../services/session-issuer.js';
 import { statesMatch, toOAuthIdentity } from './login-with-google.use-case.js';
 
@@ -21,21 +24,24 @@ export interface ChangePasswordInput {
   newPassword: string;
 }
 
-export interface PasswordChanged {
-  /** Replaces the caller's token; the old one stays limited to changing the password. */
-  accessToken: string;
-  user: AuthUserView;
-}
-
 export class ChangePasswordUseCase {
   constructor(
     private readonly users: UserRepository,
     private readonly hasher: PasswordHasher,
     private readonly sessions: SessionIssuer,
+    private readonly revocations: RefreshTokenRevocations,
+    private readonly emails: EmailProvider,
+    private readonly now: () => Date = () => new Date(),
+    private readonly onEmailFailure: (error: unknown) => void = () => undefined,
   ) {}
 
-  /** Replaces the password after re-checking the current one, which ends a forced password change. */
-  async execute(input: ChangePasswordInput): Promise<PasswordChanged> {
+  /**
+   * Replaces the password after re-checking the current one, which ends a
+   * forced password change. Like a reset, it closes every session the account
+   * had open and tells the owner by email; the caller gets a new session, so
+   * the device the change was made on stays signed in.
+   */
+  async execute(input: ChangePasswordInput): Promise<AuthSession> {
     const user = await this.users.findById(input.userId);
     if (!user) {
       throw new UserNotFoundException();
@@ -47,13 +53,17 @@ export class ChangePasswordUseCase {
       throw new PasswordUnchangedException();
     }
     await this.users.setPassword(user.id, await this.hasher.hash(input.newPassword));
+    // Before the new session is issued: a token is refused when it is older than this instant
+    await this.revocations.revokeAllFor(user.id, this.now());
 
     const updated = await this.users.findById(user.id);
     if (!updated) {
       throw new UserNotFoundException();
     }
-    const view = await this.sessions.describe(updated);
-    return { accessToken: await this.sessions.issueAccessToken(view), user: view };
+    const session = await this.sessions.issueFor(updated);
+    // The password is already changed; an email that cannot be sent must not say otherwise
+    await this.emails.send(passwordChangedEmail(updated)).catch(this.onEmailFailure);
+    return session;
   }
 }
 

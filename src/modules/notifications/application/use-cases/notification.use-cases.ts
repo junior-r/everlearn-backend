@@ -28,18 +28,31 @@ export class SendNotificationsUseCase {
   ) {}
 
   /**
-   * Stores a notice for each recipient, nudges their open browsers and emails
-   * them. Only notices really added are announced, so asking twice for a
+   * Stores a notice for each recipient (a request for a Student's Guardians
+   * becomes one per Guardian), nudges their open browsers and emails them. Only notices really added are announced, so asking twice for a
    * reminder sends it once. Resolves to how many were added.
    */
   async execute(requests: NotificationRequest[]): Promise<number> {
-    const membershipIds = requests.flatMap(({ recipient }) => ('membershipId' in recipient ? [recipient.membershipId] : []));
-    const users = membershipIds.length > 0 ? await this.notifications.usersOf(membershipIds) : new Map<string, string>();
+    const memberships = requests.flatMap(({ recipient }) => ('membershipId' in recipient ? [recipient.membershipId] : []));
+    const students = requests.flatMap(({ recipient }) => ('guardiansOf' in recipient ? [recipient.guardiansOf] : []));
+    const [users, guardians] = await Promise.all([
+      memberships.length > 0 ? this.notifications.usersOf(memberships) : new Map<string, string>(),
+      students.length > 0 ? this.notifications.guardiansOf(students) : new Map<string, string[]>(),
+    ]);
+    const accountsOf = (recipient: NotificationRequest['recipient']): string[] => {
+      if ('userId' in recipient) {
+        return [recipient.userId];
+      }
+      if ('membershipId' in recipient) {
+        const userId = users.get(recipient.membershipId);
+        return userId ? [userId] : [];
+      }
+      return guardians.get(recipient.guardiansOf) ?? [];
+    };
     const asked: NewNotification[] = [];
     const withoutEmail = new Set<string>();
     for (const { recipient, email, ...notice } of requests) {
-      const userId = 'userId' in recipient ? recipient.userId : users.get(recipient.membershipId);
-      if (userId) {
+      for (const userId of accountsOf(recipient)) {
         const id = this.newId();
         asked.push({ ...notice, id, userId });
         if (email === false) {

@@ -17,7 +17,7 @@ A new member chooses their own password before anything else opens. Google sign-
 ## The Implementation
 
 - **Flag:** set when an admin registers a new account; cleared by `POST /auth/change-password`. The Platform Admin created from configuration is not flagged.
-- **`POST /auth/change-password`** re-checks the current password, rejects reusing it, and returns a new access token without the restriction. The old token stays restricted until it expires.
+- **`POST /auth/change-password`** re-checks the current password and rejects reusing it. It then behaves like a reset: every access and refresh token issued before it is refused (`RefreshTokenRevocations.revokeAllFor`), and the owner gets the "your password was changed" email (`passwordChangedEmail`, shared with the reset). The caller receives a new session, access token and refresh cookie, issued after the cut-off, so the device the change was made on stays signed in and every other one is signed out. An email that cannot be sent does not undo the change.
 - **`POST /auth/google/link`** (active accounts with their own password only) returns Google's consent URL and sets the ticket cookie.
 - **`GET /auth/google/callback`** serves both flows. With a ticket cookie it links and redirects to `/settings?google=linked`; otherwise it signs in.
 - **Unlinked Google sign-in** is refused with `GOOGLE_ACCOUNT_NOT_LINKED`.
@@ -41,4 +41,4 @@ A new member chooses their own password before anything else opens. Google sign-
   - **The owner is told.** A "your password was changed" email goes out after a successful reset; if it cannot be sent the reset still stands.
   - **Fails closed.** Without Redis no token is issued or accepted.
 - **The Implementation:** `RequestPasswordResetUseCase`, `ResetPasswordUseCase` (`identity/application/use-cases/password-reset.use-cases.ts`), the `PasswordResetTokens` port with `RedisPasswordResetTokens`, the shared `EmailProvider`. A reset also ends a forced password change. `forgot-password` accepts `locale` (`es` | `en`) for the screen the link opens; the email itself is in Spanish.
-- **Known gaps:** every authenticated request now reads Redis once, and is refused while Redis is down (security checks fail closed); a session opened in the same second as the reset survives it; a realtime socket already connected stays open until it reconnects; changing the password from Profile Settings does not close other sessions or send the email.
+- **Known gaps:** every authenticated request now reads Redis once, and is refused while Redis is down (security checks fail closed); a session opened in the same second as the reset survives it; a realtime socket already connected stays open until it reconnects; the same one-second window applies to a change from Profile Settings.

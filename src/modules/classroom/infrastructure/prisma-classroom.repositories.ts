@@ -264,9 +264,19 @@ export class PrismaSessionRecorder implements SessionRecorder {
           participations: { select: { membershipId: true, joinedAt: true, leftAt: true } },
           course: {
             select: {
+              pensumSubject: { select: { subject: { select: { name: true } } } },
               group: {
                 select: {
-                  enrollments: { where: { status: 'ACTIVE' }, select: { id: true, studentId: true } },
+                  name: true,
+                  institutionId: true,
+                  enrollments: {
+                    where: { status: 'ACTIVE' },
+                    select: {
+                      id: true,
+                      studentId: true,
+                      student: { select: { user: { select: { firstName: true, lastName: true } } } },
+                    },
+                  },
                 },
               },
             },
@@ -283,8 +293,16 @@ export class PrismaSessionRecorder implements SessionRecorder {
       return {
         // A class whose start was never reported counts from the moment the Teacher opened it
         session: { from: row.actualStartedAt ?? row.startsAt, to: endedAt },
+        course: {
+          institutionId: row.course.group.institutionId,
+          subjectName: row.course.pensumSubject.subject.name,
+          groupName: row.course.group.name,
+        },
         students: row.course.group.enrollments.map((enrollment) => ({
           enrollmentId: enrollment.id,
+          membershipId: enrollment.studentId,
+          firstName: enrollment.student.user.firstName,
+          lastName: enrollment.student.user.lastName,
           connections: row.participations
             .filter((stay) => stay.membershipId === enrollment.studentId)
             .map((stay) => ({ from: stay.joinedAt, to: stay.leftAt ?? endedAt })),
@@ -293,7 +311,7 @@ export class PrismaSessionRecorder implements SessionRecorder {
     });
   }
 
-  saveAttendance(sessionId: string, marks: AttendanceMark[]): Promise<void> {
+  saveAttendance(sessionId: string, marks: AttendanceMark[]): Promise<AttendanceMark[]> {
     return runQuery(
       this.logger,
       async () => {
@@ -316,6 +334,13 @@ export class PrismaSessionRecorder implements SessionRecorder {
             }),
           ),
         ]);
+        // What stands as automatic now: a record taken by hand keeps what its author wrote
+        const automatic = await this.prisma.attendanceRecord.findMany({
+          where: { sessionId, source: 'AUTOMATIC', enrollmentId: { in: marks.map((mark) => mark.enrollmentId) } },
+          select: { enrollmentId: true },
+        });
+        const stored = new Set(automatic.map((record) => record.enrollmentId));
+        return marks.filter((mark) => stored.has(mark.enrollmentId));
       },
       unknownReference,
     );

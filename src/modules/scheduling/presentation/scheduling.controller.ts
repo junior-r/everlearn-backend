@@ -62,7 +62,9 @@ export class SchedulingController {
     return this.setAvailability.execute(institutionId, teacherId, dto.periodId, windows);
   }
 
+  // Read by the Principal too; every write below stays with the Institution Admin
   @Get('groups/:groupId/schedule')
+  @Roles(Role.ADMIN, Role.COORDINATOR)
   schedule(
     @CurrentInstitutionId() institutionId: string,
     @Param('groupId', ParseUUIDPipe) groupId: string,

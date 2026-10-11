@@ -1,6 +1,6 @@
 import request from 'supertest';
 import { Role } from '../src/shared/domain/auth/role.js';
-import { createTestApp, type TestApp } from './support/test-app.js';
+import { createTestApp, TEST_INTERNAL_SECRET, type TestApp } from './support/test-app.js';
 
 const TEMPORARY_PASSWORD = 'temporary-password';
 
@@ -80,7 +80,7 @@ describe('Guardians (HTTP)', () => {
       })
       .expect(201);
     await teacher.post(`/evaluations/${project.body.id}/publish`).expect(200);
-    return { alan, grace, linus, gina };
+    return { alan, grace, linus, gina, groupId: group.body.id as string, coursePath };
   }
 
   const link = (studentMembershipId: string, guardianMembershipId: string, relationship = 'MOTHER') =>
@@ -183,6 +183,96 @@ describe('Guardians (HTTP)', () => {
     // A Teacher who does not teach her ward, and the ward herself, stay out of reach
     await as(gina.token).post(`/messages/conversations/${emmy.userId}`).send({ body: 'Hola' }).expect(404);
     await as(gina.token).post(`/messages/conversations/${grace.userId}`).send({ body: 'Hola' }).expect(404);
+  });
+
+  it('tells a Guardian about the evaluations, grades and absences of their ward, once each', async () => {
+    const { alan, grace, linus, gina, groupId, coursePath } = await seed();
+    const omar = await member(Role.GUARDIAN, 'Omar');
+    await as(adminToken).post(`/groups/${groupId}/students`).send({ membershipId: linus.membershipId }).expect(200);
+    await link(grace.membershipId, gina.membershipId).expect(200);
+    const teacher = as(alan.token);
+
+    const quiz = await teacher
+      .post(`${coursePath}/evaluations`)
+      .send({ title: 'Taller', type: 'EXAM', weight: 10, maxScore: 10 })
+      .expect(201);
+    await teacher.post(`/evaluations/${quiz.body.id}/publish`).expect(200);
+    const grades = { grades: [{ enrollmentId: grace.membershipId, score: 9 }, { enrollmentId: linus.membershipId, score: 4 }] };
+    await teacher.put(`/evaluations/${quiz.body.id}/grades`).send(grades).expect(204);
+    await teacher.put(`/evaluations/${quiz.body.id}/grades`).send(grades).expect(204);
+    // Nobody connects to the class: both Students are absent, and the report arrives twice
+    const started = await teacher.post(`${coursePath}/sessions`).expect(201);
+    for (let report = 0; report < 2; report += 1) {
+      await request(ctx.server)
+        .post(`/internal/classroom/sessions/${started.body.sessionId}/finished`)
+        .set('X-Internal-Secret', TEST_INTERNAL_SECRET)
+        .send({ endedAt: new Date(Date.now() + 45 * 60_000).toISOString() })
+        .expect(204);
+    }
+
+    const notices = (await as(gina.token, null).get('/notifications').expect(200)).body.items as Array<{
+      type: string;
+      data: Record<string, unknown>;
+    }>;
+    expect(notices.map((notice) => notice.type).sort()).toEqual([
+      'WARD_ATTENDANCE',
+      'WARD_EVALUATION_PUBLISHED',
+      'WARD_GRADE_POSTED',
+    ]);
+    // Only about Grace: Linus is not her ward
+    expect(notices.every((notice) => notice.data.studentName === 'Grace Prueba')).toBe(true);
+    expect(notices.find((notice) => notice.type === 'WARD_GRADE_POSTED')?.data).toMatchObject({ score: 9, maxScore: 10 });
+    expect(notices.find((notice) => notice.type === 'WARD_ATTENDANCE')?.data).toMatchObject({ status: 'ABSENT' });
+    // The in-memory courses carry no subject name, so only the start of each subject is checked
+    const subjects = ctx.emails.sent.filter((email) => email.to === 'gina@example.com').map((email) => email.subject);
+    for (const start of ['Grace Prueba no asistió a', 'Nueva evaluación para Grace Prueba: Taller', 'Nueva nota de Grace Prueba en']) {
+      expect(subjects.filter((subject) => subject.startsWith(start))).toHaveLength(1);
+    }
+    // A Guardian with no ward hears nothing
+    expect((await as(omar.token, null).get('/notifications').expect(200)).body.items).toEqual([]);
+  });
+
+  it('finds members by name or document number for the office, a few at a time', async () => {
+    const { alan, grace } = await seed();
+    const staff = await ctx.signInAs(Role.STAFF, institutionId, 'staff@example.com');
+    ctx.members.documentNumbers.set(grace.userId, 'V-12345678');
+
+    const byName = await as(adminToken).get('/members/search?role=STUDENT&query=gra').expect(200);
+    expect(byName.body).toEqual([
+      { membershipId: grace.membershipId, firstName: 'Grace', lastName: 'Prueba', email: 'grace@example.com', documentNumber: 'V-12345678' },
+    ]);
+    expect((await as(staff.token).get('/members/search?role=STUDENT&query=123456').expect(200)).body).toHaveLength(1);
+    // The role narrows the search, and one letter is not a search
+    expect((await as(adminToken).get('/members/search?role=GUARDIAN&query=gra').expect(200)).body).toEqual([]);
+    expect((await as(adminToken).get('/members/search?role=STUDENT&query=g').expect(200)).body).toEqual([]);
+
+    await as(adminToken).get('/members/search?query=gra').expect(400);
+    await as(adminToken).get('/members/search?role=PIRATE&query=gra').expect(400);
+    await as(alan.token).get('/members/search?role=STUDENT&query=gra').expect(403);
+    await as(adminToken, otherInstitutionId).get('/members/search?role=STUDENT&query=gra').expect(403);
+  });
+
+  it('lets a Principal read a group and its timetable, and change neither', async () => {
+    const { alan, groupId, coursePath } = await seed();
+    const principal = await ctx.signInAs(Role.COORDINATOR, institutionId, 'principal@example.com');
+    const api = as(principal.token);
+
+    const group = await api.get(`/groups/${groupId}`).expect(200);
+    expect(group.body).toMatchObject({ name: '1ro A' });
+    expect(group.body.courses).toEqual([
+      expect.objectContaining({ teacher: expect.objectContaining({ membershipId: alan.membershipId, firstName: 'Alan' }) }),
+    ]);
+    expect((await api.get(`/groups/${groupId}/schedule`).expect(200)).body).toEqual([]);
+
+    await api.get('/groups').expect(403);
+    await api.delete(`/groups/${groupId}`).expect(403);
+    await api.put(coursePath).send({ teacherMembershipId: alan.membershipId }).expect(403);
+    await api
+      .post(`/groups/${groupId}/schedule`)
+      .send({ subjectId: coursePath.split('/').at(-1), dayOfWeek: 'MONDAY', startMinute: 480, endMinute: 525 })
+      .expect(403);
+    // Their role opens nothing in another institution
+    await as(principal.token, otherInstitutionId).get(`/groups/${groupId}`).expect(403);
   });
 
   it('lets the office register Guardians', async () => {

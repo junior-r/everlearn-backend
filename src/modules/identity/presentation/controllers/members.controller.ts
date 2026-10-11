@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Post } from '@nestjs/common';
+import { Body, Controller, Get, Inject, Post, Query } from '@nestjs/common';
 import type { AuthenticatedUser } from '../../../../shared/domain/auth/authenticated-user.js';
 import { Role } from '../../../../shared/domain/auth/role.js';
 import {
@@ -9,10 +9,11 @@ import {
 import {
   ListMembersUseCase,
   RegisterMemberUseCase,
+  SearchMembersUseCase,
   type RegisteredMember,
 } from '../../application/use-cases/member.use-cases.js';
-import type { Member } from '../../domain/member.js';
-import { RegisterMemberDto } from '../dtos/member.dtos.js';
+import type { Member, MemberMatch } from '../../domain/member.js';
+import { RegisterMemberDto, SearchMembersDto } from '../dtos/member.dtos.js';
 
 /**
  * Member management for the institution in the `x-institution-id` header.
@@ -24,11 +25,18 @@ export class MembersController {
   constructor(
     @Inject(RegisterMemberUseCase) private readonly registerMember: RegisterMemberUseCase,
     @Inject(ListMembersUseCase) private readonly listMembers: ListMembersUseCase,
+    @Inject(SearchMembersUseCase) private readonly searchMembers: SearchMembersUseCase,
   ) {}
 
   @Get()
   list(@CurrentInstitutionId() institutionId: string): Promise<Member[]> {
     return this.listMembers.execute(institutionId);
+  }
+
+  /** A few members holding a role, by name or document number: what a picker needs, however large the institution. */
+  @Get('search')
+  search(@CurrentInstitutionId() institutionId: string, @Query() dto: SearchMembersDto): Promise<MemberMatch[]> {
+    return this.searchMembers.execute(institutionId, dto.role, dto.query);
   }
 
   @Post()

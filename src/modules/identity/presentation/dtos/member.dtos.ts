@@ -19,3 +19,12 @@ export class RegisterMemberDto {
   @IsIn(Object.values(Role))
   role: Role;
 }
+
+export class SearchMembersDto {
+  @IsIn(Object.values(Role))
+  role: Role;
+
+  @IsString()
+  @MaxLength(100)
+  query: string;
+}

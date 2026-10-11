@@ -1,7 +1,9 @@
+import { NotificationType, type Notifier } from '../../../../shared/domain/notifications/notifier.js';
 import {
   InvalidSessionEventException,
   MAX_CHAT_LENGTH,
   MAX_TRANSCRIPT_LENGTH,
+  AutomaticAttendance,
   takeAttendance,
   type ChatMessage,
   type Participation,
@@ -19,20 +21,51 @@ function cleanText(value: string, maxLength: number, label: string): string {
 }
 
 export class RecordRoomLifecycleUseCase {
-  constructor(private readonly recorder: SessionRecorder) {}
+  constructor(
+    private readonly recorder: SessionRecorder,
+    private readonly notifier: Notifier,
+  ) {}
 
   /** The room opened: the class is live. */
   started(sessionId: string, at: Date): Promise<void> {
     return this.recorder.start(sessionId, at);
   }
 
-  /** The room closed: the class is over, nobody is connected any more and attendance is taken. */
+  /**
+   * The room closed: the class is over, nobody is connected any more and
+   * attendance is taken. The Guardians of a Student marked absent or late are
+   * told, once: this report may arrive twice, and the notice carries a key.
+   */
   async finished(sessionId: string, at: Date): Promise<void> {
     await this.recorder.finish(sessionId, at);
     const rollCall = await this.recorder.rollCall(sessionId);
-    if (rollCall) {
-      await this.recorder.saveAttendance(sessionId, takeAttendance(rollCall));
+    if (!rollCall) {
+      return;
     }
+    const recorded = await this.recorder.saveAttendance(sessionId, takeAttendance(rollCall));
+    const { course, session, students } = rollCall;
+    await this.notifier.notify(
+      recorded.flatMap(({ enrollmentId, status }) => {
+        const student = students.find((candidate) => candidate.enrollmentId === enrollmentId);
+        return student && status !== AutomaticAttendance.PRESENT
+          ? [
+              {
+                recipient: { guardiansOf: student.membershipId },
+                institutionId: course.institutionId,
+                type: NotificationType.WARD_ATTENDANCE,
+                data: {
+                  studentName: `${student.firstName} ${student.lastName}`,
+                  subjectName: course.subjectName,
+                  groupName: course.groupName,
+                  status,
+                  date: session.from.toISOString(),
+                },
+                dedupeKey: `attendance:${sessionId}:${enrollmentId}`,
+              },
+            ]
+          : [];
+      }),
+    );
   }
 }
 

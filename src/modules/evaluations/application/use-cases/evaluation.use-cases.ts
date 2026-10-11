@@ -143,7 +143,7 @@ export class PublishEvaluationUseCase {
 
   /**
    * Makes an evaluation visible to the Students of its course and open to
-   * grading, and tells them. Publishing one already published tells nobody again.
+   * grading, and tells them and their Guardians. Publishing one already published tells nobody again.
    */
   async execute(actor: Actor, evaluationId: string): Promise<Evaluation> {
     const { evaluation: draft } = await requireOwnEvaluation(this.evaluations, actor, evaluationId);
@@ -151,19 +151,28 @@ export class PublishEvaluationUseCase {
     if (!draft.isPublished) {
       const { course } = draft;
       const students = await this.evaluations.listStudents(course.groupId);
+      const about = {
+        evaluationId,
+        evaluationTitle: published.title,
+        subjectName: course.subject.name,
+        groupName: course.groupName,
+        dueAt: published.dueAt?.toISOString() ?? null,
+      };
       await this.notifier.notify(
-        students.map((student) => ({
-          recipient: { membershipId: student.membershipId },
-          institutionId: actor.institutionId,
-          type: NotificationType.EVALUATION_PUBLISHED,
-          data: {
-            evaluationId,
-            evaluationTitle: published.title,
-            subjectName: course.subject.name,
-            groupName: course.groupName,
-            dueAt: published.dueAt?.toISOString() ?? null,
+        students.flatMap((student) => [
+          {
+            recipient: { membershipId: student.membershipId },
+            institutionId: actor.institutionId,
+            type: NotificationType.EVALUATION_PUBLISHED,
+            data: about,
           },
-        })),
+          {
+            recipient: { guardiansOf: student.membershipId },
+            institutionId: actor.institutionId,
+            type: NotificationType.WARD_EVALUATION_PUBLISHED,
+            data: { ...about, studentName: `${student.firstName} ${student.lastName}` },
+          },
+        ]),
       );
     }
     return published;
@@ -184,17 +193,23 @@ export class DeleteEvaluationUseCase {
 }
 
 export class RecordGradesUseCase {
-  constructor(private readonly evaluations: EvaluationRepository) {}
+  constructor(
+    private readonly evaluations: EvaluationRepository,
+    private readonly notifier: Notifier,
+  ) {}
 
-  /** Stores the scores of enrolled Students in a published evaluation; a null score removes the grade. */
+  /**
+   * Stores the scores of enrolled Students in a published evaluation; a null
+   * score removes the grade. A Student whose score is new or different is
+   * told, and so are their Guardians.
+   */
   async execute(actor: Actor, evaluationId: string, entries: GradeEntry[]): Promise<void> {
     const { evaluation, teacherId } = await requireOwnEvaluation(this.evaluations, actor, evaluationId);
     if (!evaluation.isPublished) {
       throw new EvaluationNotPublishedException();
     }
-    const enrolled = new Set(
-      (await this.evaluations.listStudents(evaluation.course.groupId)).map((student) => student.enrollmentId),
-    );
+    const students = await this.evaluations.listStudents(evaluation.course.groupId);
+    const enrolled = new Set(students.map((student) => student.enrollmentId));
     for (const { enrollmentId, score } of entries) {
       if (!enrolled.has(enrollmentId)) {
         throw new StudentNotEnrolledException();
@@ -203,6 +218,11 @@ export class RecordGradesUseCase {
         throw new ScoreOutOfRangeException(evaluation.maxScore);
       }
     }
+    const before = new Map(
+      (await this.evaluations.listGrades(evaluation.course.courseId))
+        .filter((grade) => grade.evaluationId === evaluationId)
+        .map((grade) => [grade.enrollmentId, grade.score]),
+    );
     await this.evaluations.saveGrades(
       evaluationId,
       teacherId,
@@ -210,6 +230,40 @@ export class RecordGradesUseCase {
         ...entry,
         feedback: entry.feedback === undefined ? undefined : entry.feedback?.trim() || null,
       })),
+    );
+    const about = {
+      evaluationId,
+      evaluationTitle: evaluation.title,
+      subjectName: evaluation.course.subject.name,
+      groupName: evaluation.course.groupName,
+      maxScore: evaluation.maxScore,
+    };
+    await this.notifier.notify(
+      entries.flatMap(({ enrollmentId, score }) => {
+        const student = students.find((candidate) => candidate.enrollmentId === enrollmentId);
+        // Saving the gradebook again without touching a score tells nobody twice
+        if (!student || score === null || before.get(enrollmentId) === score) {
+          return [];
+        }
+        // While a notice about this grade is unread, a correction does not add another
+        const collapseKey = `grade:${evaluationId}:${enrollmentId}`;
+        return [
+          {
+            recipient: { membershipId: student.membershipId },
+            institutionId: actor.institutionId,
+            type: NotificationType.GRADE_POSTED,
+            data: { ...about, score },
+            collapseKey,
+          },
+          {
+            recipient: { guardiansOf: student.membershipId },
+            institutionId: actor.institutionId,
+            type: NotificationType.WARD_GRADE_POSTED,
+            data: { ...about, score, studentName: `${student.firstName} ${student.lastName}` },
+            collapseKey,
+          },
+        ];
+      }),
     );
   }
 }

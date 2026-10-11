@@ -33,6 +33,23 @@ export class PrismaNotificationRepository implements NotificationRepository {
     });
   }
 
+  guardiansOf(studentMembershipIds: string[]): Promise<Map<string, string[]>> {
+    return runQuery(this.logger, async () => {
+      const links = await this.prisma.guardianLink.findMany({
+        where: {
+          studentId: { in: studentMembershipIds },
+          guardian: { isActive: true, user: { status: 'ACTIVE' } },
+        },
+        select: { studentId: true, guardian: { select: { userId: true } } },
+      });
+      const byStudent = new Map<string, string[]>();
+      for (const { studentId, guardian } of links) {
+        byStudent.set(studentId, [...(byStudent.get(studentId) ?? []), guardian.userId]);
+      }
+      return byStudent;
+    });
+  }
+
   create(notifications: NewNotification[]): Promise<Notification[]> {
     return runQuery(this.logger, async () => {
       const collapsing = notifications.filter((notice) => notice.collapseKey);

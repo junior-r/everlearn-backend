@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import { APP_CONFIG, type AppConfig } from '../../config/app-config.js';
+import { NOTIFIER } from '../../shared/domain/notifications/notifier.js';
 import { useCaseProvider } from '../../shared/infrastructure/nest/use-case.provider.js';
 import {
   IssueClassroomTokenUseCase,
@@ -41,7 +42,7 @@ import { InternalClassroomController } from './presentation/internal-classroom.c
     useCaseProvider(ListMyCoursesUseCase, [CLASSROOM_REPOSITORY]),
     useCaseProvider(IssueClassroomTokenUseCase, [CLASSROOM_REPOSITORY, VIDEO_TOKEN_ISSUER]),
     useCaseProvider(StartClassSessionUseCase, [CLASSROOM_REPOSITORY]),
-    useCaseProvider(RecordRoomLifecycleUseCase, [SESSION_RECORDER]),
+    useCaseProvider(RecordRoomLifecycleUseCase, [SESSION_RECORDER, NOTIFIER]),
     useCaseProvider(RecordParticipationUseCase, [SESSION_RECORDER]),
     useCaseProvider(RecordChatMessageUseCase, [SESSION_RECORDER]),
     useCaseProvider(RecordTranscriptSegmentUseCase, [SESSION_RECORDER]),

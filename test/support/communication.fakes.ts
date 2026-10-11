@@ -75,10 +75,13 @@ export class InMemoryNotificationRepository implements NotificationRepository {
   readonly rows: Stored[] = [];
   /** Membership id → user id. */
   readonly memberships = new Map<string, string>();
+  /** Student membership id → the user ids of their Guardians. */
+  readonly guardians = new Map<string, string[]>();
   readonly addressees = new Map<string, Addressee>();
   /** Stand in for the lookups the Prisma adapter does in other tables. */
   lookupUser: (membershipId: string) => string | undefined = (id) => this.memberships.get(id);
   lookupAddressee: (userId: string) => Addressee | undefined = (id) => this.addressees.get(id);
+  lookupGuardians: (studentMembershipId: string) => string[] = (id) => this.guardians.get(id) ?? [];
   private clock = 0;
 
   usersOf(membershipIds: string[]): Promise<Map<string, string>> {
@@ -87,6 +90,10 @@ export class InMemoryNotificationRepository implements NotificationRepository {
       return userId ? [[id, userId]] : [];
     });
     return Promise.resolve(new Map(found));
+  }
+
+  guardiansOf(studentMembershipIds: string[]): Promise<Map<string, string[]>> {
+    return Promise.resolve(new Map(studentMembershipIds.map((id) => [id, this.lookupGuardians(id)])));
   }
 
   create(notifications: NewNotification[]): Promise<Notification[]> {

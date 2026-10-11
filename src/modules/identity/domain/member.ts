@@ -15,6 +15,28 @@ export interface Member {
   isActive: boolean;
 }
 
+/** A member found by a search: enough to tell two people with the same name apart. */
+export interface MemberMatch {
+  membershipId: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  documentNumber: string | null;
+}
+
+export const MEMBER_SEARCH_LIMIT = 10;
+const MEMBER_SEARCH_MIN_LENGTH = 2;
+const MEMBER_SEARCH_MAX_TERMS = 5;
+
+/**
+ * The words a search must all match, in a name or in a document number.
+ * Empty when there is too little to search by: nobody is listed without asking.
+ */
+export function searchTerms(query: string): string[] {
+  const text = query.trim();
+  return text.length < MEMBER_SEARCH_MIN_LENGTH ? [] : text.split(/\s+/).slice(0, MEMBER_SEARCH_MAX_TERMS);
+}
+
 const INSTITUTION_STAFF: Role[] = [Role.COORDINATOR, Role.TEACHER, Role.STAFF, Role.GUARDIAN, Role.STUDENT];
 /** Staff enrol Students, and with them the Guardians who answer for them. */
 const REGISTERED_BY_STAFF: Role[] = [Role.GUARDIAN, Role.STUDENT];

@@ -75,6 +75,34 @@ export function emailFor(type: NotificationType, data: NotificationData, firstNa
         `Tu clase de ${text(data, 'subjectName')} está por empezar`,
         `La clase de ${text(data, 'subjectName')} del grupo ${text(data, 'groupName')} empieza en unos minutos (${utc(text(data, 'startsAt'))}).`,
       );
+    case NotificationType.GRADE_POSTED:
+      return compose(
+        `Tienes una nota nueva en ${text(data, 'subjectName')}`,
+        `Tu docente calificó «${text(data, 'evaluationTitle')}» de ${text(data, 'subjectName')}: ${text(data, 'score')} sobre ${text(data, 'maxScore')}.`,
+        'Entra a la plataforma para ver el detalle y tu promedio.',
+      );
+    case NotificationType.WARD_EVALUATION_PUBLISHED:
+      return compose(
+        `Nueva evaluación para ${text(data, 'studentName')}: ${text(data, 'evaluationTitle')}`,
+        `Se publicó la evaluación «${text(data, 'evaluationTitle')}» de ${text(data, 'subjectName')} (grupo ${text(data, 'groupName')}) para ${text(data, 'studentName')}.`,
+        text(data, 'dueAt') ? `Fecha de entrega: ${utc(text(data, 'dueAt'))}.` : 'No tiene fecha de entrega.',
+      );
+    case NotificationType.WARD_GRADE_POSTED:
+      return compose(
+        `Nueva nota de ${text(data, 'studentName')} en ${text(data, 'subjectName')}`,
+        `${text(data, 'studentName')} obtuvo ${text(data, 'score')} sobre ${text(data, 'maxScore')} en «${text(data, 'evaluationTitle')}» de ${text(data, 'subjectName')}.`,
+        'Entra a la plataforma para ver su promedio.',
+      );
+    case NotificationType.WARD_ATTENDANCE:
+      return compose(
+        text(data, 'status') === 'LATE'
+          ? `${text(data, 'studentName')} llegó tarde a ${text(data, 'subjectName')}`
+          : `${text(data, 'studentName')} no asistió a ${text(data, 'subjectName')}`,
+        text(data, 'status') === 'LATE'
+          ? `${text(data, 'studentName')} estuvo conectado solo una parte de la clase de ${text(data, 'subjectName')} (${utc(text(data, 'date'))}).`
+          : `${text(data, 'studentName')} no estuvo en la clase de ${text(data, 'subjectName')} (${utc(text(data, 'date'))}).`,
+        'Si crees que es un error, escribe a su docente desde la plataforma.',
+      );
     case NotificationType.DIRECT_MESSAGE:
       return compose(
         `Nuevo mensaje de ${text(data, 'senderName')}`,

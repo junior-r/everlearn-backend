@@ -134,15 +134,20 @@ export class AuthController {
   @UseGuards(RateLimitGuard)
   @RateLimit({ scope: 'auth-change-password' })
   @HttpCode(HttpStatus.OK)
-  changePassword(
+  async changePassword(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: ChangePasswordDto,
+    @Res({ passthrough: true }) response: Response,
   ): Promise<AuthResponse> {
-    return this.changeUserPassword.execute({
-      userId: user.userId,
-      currentPassword: dto.currentPassword,
-      newPassword: dto.newPassword,
-    });
+    // The refresh cookie is replaced too: the one this browser held was just revoked with the rest
+    return this.respondWith(
+      await this.changeUserPassword.execute({
+        userId: user.userId,
+        currentPassword: dto.currentPassword,
+        newPassword: dto.newPassword,
+      }),
+      response,
+    );
   }
 
   @Public()
