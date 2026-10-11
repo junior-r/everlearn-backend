@@ -19,6 +19,7 @@ import {
   InvalidSessionEventException,
   NotClassParticipantException,
   NotCourseTeacherException,
+  secondsConnected,
   SessionStatus,
   VideoUnavailableException,
 } from '../../domain/classroom.js';
@@ -271,7 +272,7 @@ describe('recording a live class', () => {
     expect(ctx.classroom.sessions[0]).toMatchObject({ status: 'COMPLETED', actualEndedAt: at(50) });
   });
 
-  it('stores each connection once and marks only enrolled Students present', async () => {
+  it('stores each connection once', async () => {
     const ctx = setup();
     const sessionId = await ctx.open();
     const teacher = { sessionId, membershipId: ctx.alan.id, participantSid: 'PA_teacher', joinedAt: at(0) };
@@ -282,7 +283,6 @@ describe('recording a live class', () => {
     await ctx.participation.joined(student);
 
     expect(ctx.classroom.participations).toHaveLength(2);
-    expect([...ctx.classroom.present]).toEqual([`${sessionId}:${ctx.grace.id}`]);
     expect(ctx.classroom.sessions[0].peakParticipants).toBe(2);
   });
 
@@ -314,6 +314,57 @@ describe('recording a live class', () => {
     await expect(ctx.participation.left(stay, at(9))).rejects.toBeInstanceOf(
       InvalidSessionEventException,
     );
+  });
+
+  /** Runs a class from minute 0 to minute 100 in which Grace is connected during the given minutes. */
+  async function attendanceAfter(...stays: [from: number, to: number][]) {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+    await ctx.lifecycle.started(sessionId, at(0));
+    for (const [index, [from, to]] of stays.entries()) {
+      const stay = { sessionId, membershipId: ctx.grace.id, participantSid: `PA_${index}`, joinedAt: at(from) };
+      await ctx.participation.joined(stay);
+      await ctx.participation.left(stay, at(to));
+    }
+    await ctx.lifecycle.finished(sessionId, at(100));
+    return { ctx, sessionId, status: ctx.classroom.attendance.get(`${sessionId}:${ctx.grace.id}`) };
+  }
+
+  it('marks a Student present above half of the class, late above 15% of it, and absent otherwise', async () => {
+    expect((await attendanceAfter([0, 51])).status).toBe('PRESENT');
+    expect((await attendanceAfter([0, 50])).status).toBe('LATE');
+    expect((await attendanceAfter([60, 76])).status).toBe('LATE');
+    expect((await attendanceAfter([0, 15])).status).toBe('ABSENT');
+    expect((await attendanceAfter()).status).toBe('ABSENT');
+  });
+
+  it('adds up reconnections, counts overlapping connections once, and ignores time outside the class', async () => {
+    expect((await attendanceAfter([0, 20], [40, 60], [80, 95])).status).toBe('PRESENT');
+    expect((await attendanceAfter([0, 40], [10, 40], [20, 40])).status).toBe('LATE');
+    expect(secondsConnected([{ from: at(-30), to: at(10) }], { from: at(0), to: at(100) })).toBe(600);
+  });
+
+  it('counts a Student still connected when the room closes up to the end of the class', async () => {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+    await ctx.lifecycle.started(sessionId, at(0));
+    await ctx.participation.joined({ sessionId, membershipId: ctx.grace.id, participantSid: 'PA_1', joinedAt: at(40) });
+
+    await ctx.lifecycle.finished(sessionId, at(100));
+
+    expect(ctx.classroom.attendance.get(`${sessionId}:${ctx.grace.id}`)).toBe('PRESENT');
+  });
+
+  it('takes attendance of Students only, and keeps a record taken by hand', async () => {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+    ctx.classroom.manualAttendance.add(`${sessionId}:${ctx.grace.id}`);
+    await ctx.participation.joined({ sessionId, membershipId: ctx.alan.id, participantSid: 'PA_1', joinedAt: at(0) });
+
+    await ctx.lifecycle.finished(sessionId, at(100));
+    await ctx.lifecycle.finished(sessionId, at(100));
+
+    expect(ctx.classroom.attendance.size).toBe(0);
   });
 
   it('closes the connections still open when the room finishes', async () => {

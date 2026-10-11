@@ -1,8 +1,10 @@
 import type {
+  AttendanceMark,
   ChatMessage,
   ClassroomCourse,
   ClassroomRole,
   Participation,
+  RollCall,
   SessionAccess,
   TeachableCourse,
   TranscriptSegment,
@@ -40,8 +42,10 @@ export interface SessionRecorder {
   finish(sessionId: string, at: Date): Promise<void>;
   join(participation: Participation): Promise<void>;
   leave(participation: Participation, leftAt: Date): Promise<void>;
-  /** Marks an enrolled Student present. Does nothing for other members or when a record already exists. */
-  markPresent(sessionId: string, membershipId: string): Promise<void>;
+  /** Resolves to null while the session has not finished. */
+  rollCall(sessionId: string): Promise<RollCall | null>;
+  /** Stores automatic attendance, leaving alone any record a person took by hand. */
+  saveAttendance(sessionId: string, marks: AttendanceMark[]): Promise<void>;
   addChatMessage(message: ChatMessage): Promise<void>;
   addTranscriptSegment(segment: TranscriptSegment): Promise<void>;
 }

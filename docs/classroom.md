@@ -24,14 +24,15 @@ Only the Teacher assigned to a subject and the Students enrolled in its group ge
   - `POST /class-sessions/:sessionId/token` (Teacher, Student): `{ token, roomName, identity, role, subjectName, groupName }`. `NOT_CLASS_PARTICIPANT` (403) for anyone else, `CLASS_SESSION_NOT_FOUND` (404) for another institution's session, `CLASS_SESSION_CLOSED` (409) once it ended.
 - **Internal endpoints** (`/internal/classroom/sessions/:sessionId/…`, all `204`): `started`, `finished`, `participants/joined`, `participants/left`, `chat-messages`, `transcript-segments`. An unknown session or member is `404`.
 - **Session lifecycle:** `SCHEDULED` (opened by the Teacher) → `LIVE` (first participant, `started`) → `COMPLETED` (room closed, `finished`, which also closes connections still open). The room is named `class-<sessionId>`.
-- **Attendance:** each connection is a `SessionParticipation` row (`joinedAt`, `leftAt`); time in class is the sum of a member's rows. A Student who connects gets an automatic `PRESENT` `AttendanceRecord`, never overwriting one that already exists. `peakParticipants` is the most connections open at once.
+- **Attendance:** each connection is a `SessionParticipation` row (`joinedAt`, `leftAt`); time in class is the sum of a member's rows. When the room finishes, every Student enrolled in the group gets an automatic `AttendanceRecord` from the share of the class they were connected: above 50% `PRESENT`, above 15% `LATE`, otherwise `ABSENT` (`takeAttendance` in `domain/classroom.ts`). The class runs from `actualStartedAt` to `actualEndedAt`; reconnections add up and overlapping connections count once. A record taken by hand is never overwritten. `peakParticipants` is the most connections open at once.
 - **A person with several memberships** in the institution enters with the one that takes part in the class.
 - **Config:** `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` (without them the token endpoint answers `VIDEO_UNAVAILABLE`), `INTERNAL_SERVICE_SECRET`.
 
 ## Known gaps
 
 - Sessions are opened by hand and last a nominal 60 minutes; they are not generated from the timetable (`ScheduleSlot`).
-- Automatic attendance is only "connected at least once": no lateness, no minimum time.
+- Attendance measures connection time, not when the Student arrived: LATE means "attended part of the class".
+- A Teacher who stays alone in the room after the class keeps it open, which lowers every Student's share.
 - Two simultaneous "start class" requests for the same subject could open two sessions.
 - No endpoints yet to read a session's attendance, chat history or transcript.
 - `speakingSeconds`, `cameraOnSeconds` and `screenShareSeconds` are not filled.

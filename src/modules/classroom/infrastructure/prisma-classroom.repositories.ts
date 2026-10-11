@@ -7,13 +7,16 @@ import {
 } from '../../../shared/infrastructure/prisma/prisma-errors.js';
 import { PrismaService } from '../../../shared/infrastructure/prisma/prisma.service.js';
 import {
+  AutomaticAttendance,
   ClassroomRole,
   ClassSessionNotFoundException,
   roomNameFor,
   SessionStatus,
+  type AttendanceMark,
   type ChatMessage,
   type ClassroomCourse,
   type Participation,
+  type RollCall,
   type SessionAccess,
   type TeachableCourse,
   type TranscriptSegment,
@@ -250,26 +253,69 @@ export class PrismaSessionRecorder implements SessionRecorder {
     );
   }
 
-  markPresent(sessionId: string, membershipId: string): Promise<void> {
+  rollCall(sessionId: string): Promise<RollCall | null> {
+    return runQuery(this.logger, async () => {
+      const row = await this.prisma.classSession.findUnique({
+        where: { id: sessionId },
+        select: {
+          startsAt: true,
+          actualStartedAt: true,
+          actualEndedAt: true,
+          participations: { select: { membershipId: true, joinedAt: true, leftAt: true } },
+          course: {
+            select: {
+              group: {
+                select: {
+                  enrollments: { where: { status: 'ACTIVE' }, select: { id: true, studentId: true } },
+                },
+              },
+            },
+          },
+        },
+      });
+      if (!row) {
+        throw new ClassSessionNotFoundException();
+      }
+      const endedAt = row.actualEndedAt;
+      if (!endedAt) {
+        return null;
+      }
+      return {
+        // A class whose start was never reported counts from the moment the Teacher opened it
+        session: { from: row.actualStartedAt ?? row.startsAt, to: endedAt },
+        students: row.course.group.enrollments.map((enrollment) => ({
+          enrollmentId: enrollment.id,
+          connections: row.participations
+            .filter((stay) => stay.membershipId === enrollment.studentId)
+            .map((stay) => ({ from: stay.joinedAt, to: stay.leftAt ?? endedAt })),
+        })),
+      };
+    });
+  }
+
+  saveAttendance(sessionId: string, marks: AttendanceMark[]): Promise<void> {
     return runQuery(
       this.logger,
       async () => {
-        const enrollment = await this.prisma.enrollment.findFirst({
-          where: {
-            studentId: membershipId,
-            status: 'ACTIVE',
-            group: { courses: { some: { sessions: { some: { id: sessionId } } } } },
-          },
-          select: { id: true },
-        });
-        if (!enrollment) {
-          return;
-        }
-        await this.prisma.attendanceRecord.upsert({
-          where: { sessionId_enrollmentId: { sessionId, enrollmentId: enrollment.id } },
-          create: { sessionId, enrollmentId: enrollment.id, status: 'PRESENT', source: 'AUTOMATIC' },
-          update: {},
-        });
+        await this.prisma.$transaction([
+          this.prisma.attendanceRecord.createMany({
+            data: marks.map((mark) => ({ ...mark, sessionId, source: 'AUTOMATIC' as const })),
+            skipDuplicates: true,
+          }),
+          // A repeated report recalculates automatic records; one taken by hand is never touched
+          ...Object.values(AutomaticAttendance).map((status) =>
+            this.prisma.attendanceRecord.updateMany({
+              where: {
+                sessionId,
+                source: 'AUTOMATIC',
+                enrollmentId: {
+                  in: marks.filter((mark) => mark.status === status).map((mark) => mark.enrollmentId),
+                },
+              },
+              data: { status },
+            }),
+          ),
+        ]);
       },
       unknownReference,
     );

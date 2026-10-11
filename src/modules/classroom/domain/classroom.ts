@@ -74,6 +74,69 @@ export interface TranscriptSegment {
   endedAt: Date;
 }
 
+/** What a Student's time in a class amounts to once it is over. */
+export const AutomaticAttendance = { PRESENT: 'PRESENT', LATE: 'LATE', ABSENT: 'ABSENT' } as const;
+export type AutomaticAttendance = (typeof AutomaticAttendance)[keyof typeof AutomaticAttendance];
+
+/** Above this share of the class a Student was present. */
+export const PRESENT_ABOVE = 0.5;
+/** Above this share, and up to PRESENT_ABOVE, a Student was late. */
+export const LATE_ABOVE = 0.15;
+
+export interface TimeSpan {
+  from: Date;
+  to: Date;
+}
+
+/** A finished class and the connections of every Student enrolled in its group. */
+export interface RollCall {
+  session: TimeSpan;
+  students: { enrollmentId: string; connections: TimeSpan[] }[];
+}
+
+export interface AttendanceMark {
+  enrollmentId: string;
+  status: AutomaticAttendance;
+}
+
+const seconds = (span: TimeSpan) => Math.max(0, span.to.getTime() - span.from.getTime()) / 1000;
+
+/** Seconds of `within` covered by the connections; overlapping connections count once. */
+export function secondsConnected(connections: TimeSpan[], within: TimeSpan): number {
+  const clipped = connections
+    .map((span) => ({
+      from: Math.max(span.from.getTime(), within.from.getTime()),
+      to: Math.min(span.to.getTime(), within.to.getTime()),
+    }))
+    .filter((span) => span.to > span.from)
+    .sort((a, b) => a.from - b.from);
+  let total = 0;
+  let coveredUntil = Number.NEGATIVE_INFINITY;
+  for (const span of clipped) {
+    total += Math.max(0, span.to - Math.max(span.from, coveredUntil));
+    coveredUntil = Math.max(coveredUntil, span.to);
+  }
+  return total / 1000;
+}
+
+/** Present above half of the class, late above 15% of it, absent otherwise. */
+export function attendanceFor(connectedSeconds: number, sessionSeconds: number): AutomaticAttendance {
+  const share = sessionSeconds > 0 ? connectedSeconds / sessionSeconds : 0;
+  if (share > PRESENT_ABOVE) {
+    return AutomaticAttendance.PRESENT;
+  }
+  return share > LATE_ABOVE ? AutomaticAttendance.LATE : AutomaticAttendance.ABSENT;
+}
+
+/** The attendance of every enrolled Student, including those who never connected. */
+export function takeAttendance(rollCall: RollCall): AttendanceMark[] {
+  const sessionSeconds = seconds(rollCall.session);
+  return rollCall.students.map(({ enrollmentId, connections }) => ({
+    enrollmentId,
+    status: attendanceFor(secondsConnected(connections, rollCall.session), sessionSeconds),
+  }));
+}
+
 /** The LiveKit room of a session. The video-server reads the session id back from this name. */
 export const roomNameFor = (sessionId: string) => `class-${sessionId}`;
 

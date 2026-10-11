@@ -2,6 +2,7 @@ import {
   InvalidSessionEventException,
   MAX_CHAT_LENGTH,
   MAX_TRANSCRIPT_LENGTH,
+  takeAttendance,
   type ChatMessage,
   type Participation,
   type TranscriptSegment,
@@ -25,19 +26,21 @@ export class RecordRoomLifecycleUseCase {
     return this.recorder.start(sessionId, at);
   }
 
-  /** The room closed: the class is over and nobody is connected any more. */
-  finished(sessionId: string, at: Date): Promise<void> {
-    return this.recorder.finish(sessionId, at);
+  /** The room closed: the class is over, nobody is connected any more and attendance is taken. */
+  async finished(sessionId: string, at: Date): Promise<void> {
+    await this.recorder.finish(sessionId, at);
+    const rollCall = await this.recorder.rollCall(sessionId);
+    if (rollCall) {
+      await this.recorder.saveAttendance(sessionId, takeAttendance(rollCall));
+    }
   }
 }
 
 export class RecordParticipationUseCase {
   constructor(private readonly recorder: SessionRecorder) {}
 
-  /** A member connected. An enrolled Student who connects is present, unless attendance was already taken. */
-  async joined(participation: Participation): Promise<void> {
-    await this.recorder.join(participation);
-    await this.recorder.markPresent(participation.sessionId, participation.membershipId);
+  joined(participation: Participation): Promise<void> {
+    return this.recorder.join(participation);
   }
 
   async left(participation: Participation, leftAt: Date): Promise<void> {

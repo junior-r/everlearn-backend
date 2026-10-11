@@ -3,9 +3,12 @@ import {
   ClassroomRole,
   ClassSessionNotFoundException,
   SessionStatus,
+  type AttendanceMark,
+  type AutomaticAttendance,
   type ChatMessage,
   type ClassroomCourse,
   type Participation,
+  type RollCall,
   type SessionAccess,
   type TeachableCourse,
   type TranscriptSegment,
@@ -45,8 +48,10 @@ const isOpen = (session: StoredSession) =>
 export class InMemoryClassroomRepository implements ClassroomRepository, SessionRecorder {
   readonly sessions: StoredSession[] = [];
   readonly participations: StoredParticipation[] = [];
-  /** "sessionId:membershipId" of the Students marked present automatically. */
-  readonly present = new Set<string>();
+  /** Automatic attendance by "sessionId:membershipId"; a Student's membership id stands in for the enrollment. */
+  readonly attendance = new Map<string, AutomaticAttendance>();
+  /** Keys whose attendance a person took by hand. */
+  readonly manualAttendance = new Set<string>();
   readonly chatMessages: ChatMessage[] = [];
   readonly transcriptSegments: TranscriptSegment[] = [];
 
@@ -224,10 +229,30 @@ export class InMemoryClassroomRepository implements ClassroomRepository, Session
     }
   }
 
-  async markPresent(sessionId: string, membershipId: string): Promise<void> {
+  async rollCall(sessionId: string): Promise<RollCall | null> {
     const session = this.requireSession(sessionId);
-    if (await this.isEnrolled(session.groupId, membershipId)) {
-      this.present.add(`${sessionId}:${membershipId}`);
+    const endedAt = session.actualEndedAt;
+    if (!endedAt) {
+      return null;
+    }
+    const group = this.groups.rows.find((row) => row.id === session.groupId);
+    return {
+      session: { from: session.actualStartedAt ?? session.startsAt, to: endedAt },
+      students: (group?.studentIds ?? []).map((studentId) => ({
+        enrollmentId: studentId,
+        connections: this.participations
+          .filter((row) => row.sessionId === sessionId && row.membershipId === studentId)
+          .map((row) => ({ from: row.joinedAt, to: row.leftAt ?? endedAt })),
+      })),
+    };
+  }
+
+  async saveAttendance(sessionId: string, marks: AttendanceMark[]): Promise<void> {
+    for (const { enrollmentId, status } of marks) {
+      const key = `${sessionId}:${enrollmentId}`;
+      if (!this.manualAttendance.has(key)) {
+        this.attendance.set(key, status);
+      }
     }
   }
 

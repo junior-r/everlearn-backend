@@ -192,6 +192,7 @@ describe('Virtual classroom (HTTP)', () => {
       };
       const chatId = randomUUID();
 
+      await internal(`${sessionId}/started`).send({ startedAt: '2026-10-12T08:00:00.000Z' }).expect(204);
       await internal(`${sessionId}/participants/joined`).send(stay).expect(204);
       await internal(`${sessionId}/chat-messages`)
         .send({ id: chatId, senderId: grace.membershipId, content: 'Hola', sentAt: '2026-10-12T08:03:00.000Z' })
@@ -220,7 +221,8 @@ describe('Virtual classroom (HTTP)', () => {
           leftAt: new Date('2026-10-12T08:40:00.000Z'),
         },
       ]);
-      expect([...ctx.classroom.present]).toEqual([`${sessionId}:${grace.membershipId}`]);
+      // 38 of the 45 minutes: more than half the class
+      expect([...ctx.classroom.attendance]).toEqual([[`${sessionId}:${grace.membershipId}`, 'PRESENT']]);
       expect(ctx.classroom.chatMessages).toEqual([expect.objectContaining({ id: chatId, content: 'Hola' })]);
       expect(ctx.classroom.transcriptSegments).toEqual([
         expect.objectContaining({ speakerId: alan.membershipId, text: 'Buenos días' }),
