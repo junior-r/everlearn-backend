@@ -107,6 +107,35 @@ export interface AttendanceMark {
   status: AutomaticAttendance;
 }
 
+/** Every mark a person may give. Excusing an absence is a decision only a person can take. */
+export const AttendanceStatus = { ...AutomaticAttendance, EXCUSED: 'EXCUSED' } as const;
+export type AttendanceStatus = (typeof AttendanceStatus)[keyof typeof AttendanceStatus];
+
+export const MAX_ATTENDANCE_NOTE_LENGTH = 300;
+
+/** A mark the Teacher gives by hand. */
+export interface ManualAttendanceMark {
+  enrollmentId: string;
+  status: AttendanceStatus;
+  note: string | null;
+}
+
+/** A class with its enrolled Students and the mark each has so far. */
+export interface AttendanceSheet {
+  startsAt: Date;
+  teacherMembershipId: string | null;
+  course: RollCall['course'];
+  students: Array<{
+    enrollmentId: string;
+    membershipId: string;
+    firstName: string;
+    lastName: string;
+    status: AttendanceStatus | null;
+    /** True when a person gave the mark; automatic attendance then leaves it alone. */
+    takenByHand: boolean;
+  }>;
+}
+
 const seconds = (span: TimeSpan) => Math.max(0, span.to.getTime() - span.from.getTime()) / 1000;
 
 /** Seconds of `within` covered by the connections; overlapping connections count once. */
@@ -192,5 +221,11 @@ export class VideoUnavailableException extends DomainException {
 export class InvalidSessionEventException extends DomainException {
   constructor(message: string) {
     super('VALIDATION', 'INVALID_SESSION_EVENT', message);
+  }
+}
+
+export class StudentNotInClassException extends DomainException {
+  constructor() {
+    super('VALIDATION', 'STUDENT_NOT_IN_CLASS', 'Attendance can only be taken for Students enrolled in the class');
   }
 }

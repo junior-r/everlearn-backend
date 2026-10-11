@@ -226,6 +226,27 @@ export class InMemoryMemberRepository implements MemberRepository {
     return Promise.resolve(matches);
   }
 
+  page(
+    institutionId: string,
+    filter: { terms: string[]; role: Role | null; skip: number; take: number },
+  ): Promise<{ items: Member[]; total: number }> {
+    const matching = this.members
+      .filter((member) => member.institutionId === institutionId && (!filter.role || member.role === filter.role))
+      .map((member) => this.toMember(member))
+      .filter((member) =>
+        filter.terms.every((term) =>
+          [member.firstName, member.lastName, member.email, this.documentNumbers.get(member.userId) ?? ''].some(
+            (value) => value.toLowerCase().includes(term.toLowerCase()),
+          ),
+        ),
+      )
+      .sort((a, b) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName));
+    return Promise.resolve({
+      items: matching.slice(filter.skip, filter.skip + filter.take),
+      total: matching.length,
+    });
+  }
+
   listByInstitution(institutionId: string): Promise<Member[]> {
     return Promise.resolve(
       this.members

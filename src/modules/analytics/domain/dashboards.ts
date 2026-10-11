@@ -1,3 +1,4 @@
+import { DomainException } from '../../../shared/domain/domain.exception.js';
 import type { AttendanceAtRisk, AttendanceCounts } from '../../attendance/domain/attendance-standing.js';
 
 /** What a Platform Admin sees of the whole platform. */
@@ -110,4 +111,40 @@ export interface AcademicOverview {
   groups: GroupOverview[];
   pensums: PensumOverview[];
   teachers: TeacherLoad[];
+}
+
+/**
+ * One group as whoever oversees the teaching needs it: who teaches what, and
+ * when. It counts the Students and names none of them.
+ */
+export interface GroupTeaching {
+  id: string;
+  name: string;
+  level: number;
+  periodName: string;
+  pensumName: string;
+  students: number;
+  courses: Array<{
+    subjectId: string;
+    code: string;
+    name: string;
+    /** Hours a week the pensum gives the subject. */
+    weeklyHours: number;
+    teacher: { membershipId: string; firstName: string; lastName: string } | null;
+  }>;
+  /** The weekly classes; times are minutes from midnight with an exclusive end. */
+  schedule: Array<{
+    dayOfWeek: string;
+    startMinute: number;
+    endMinute: number;
+    subjectName: string;
+    teacherName: string | null;
+    room: string | null;
+  }>;
+}
+
+export class TeachingGroupNotFoundException extends DomainException {
+  constructor() {
+    super('NOT_FOUND', 'GROUP_NOT_FOUND', 'Group not found');
+  }
 }

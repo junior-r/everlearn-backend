@@ -120,6 +120,40 @@ export class PrismaMemberRepository implements MemberRepository {
     });
   }
 
+  page(
+    institutionId: string,
+    filter: { terms: string[]; role: Role | null; skip: number; take: number },
+  ): Promise<{ items: Member[]; total: number }> {
+    return runQuery(this.logger, async () => {
+      const contains = (term: string) => ({ contains: term, mode: 'insensitive' as const });
+      const where: Prisma.MembershipWhereInput = {
+        institutionId,
+        ...(filter.role && { role: filter.role }),
+        AND: filter.terms.map((term) => ({
+          user: {
+            OR: [
+              { firstName: contains(term) },
+              { lastName: contains(term) },
+              { email: contains(term) },
+              { profile: { documentNumber: contains(term) } },
+            ],
+          },
+        })),
+      };
+      const [rows, total] = await this.prisma.$transaction([
+        this.prisma.membership.findMany({
+          where,
+          select: memberSelect,
+          orderBy: [{ user: { lastName: 'asc' } }, { user: { firstName: 'asc' } }, { id: 'asc' }],
+          skip: filter.skip,
+          take: filter.take,
+        }),
+        this.prisma.membership.count({ where }),
+      ]);
+      return { items: rows.map(toMember), total };
+    });
+  }
+
   search(institutionId: string, role: Role, terms: string[], limit: number): Promise<MemberMatch[]> {
     return runQuery(this.logger, async () => {
       const contains = (term: string) => ({ contains: term, mode: 'insensitive' as const });

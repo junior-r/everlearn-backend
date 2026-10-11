@@ -2,10 +2,12 @@ import { Module } from '@nestjs/common';
 import type { Redis } from 'ioredis';
 import { APP_CONFIG, type AppConfig } from '../../config/app-config.js';
 import { REDIS_CLIENT } from '../../shared/infrastructure/redis/redis.tokens.js';
+import { useCaseProvider } from '../../shared/infrastructure/nest/use-case.provider.js';
 import { GetGradebookUseCase } from '../evaluations/application/use-cases/evaluation.use-cases.js';
 import { EvaluationsModule } from '../evaluations/evaluations.module.js';
 import {
   GetAcademicOverviewUseCase,
+  GetGroupTeachingUseCase,
   GetInstitutionDashboardUseCase,
   GetPlatformDashboardUseCase,
   GetTeacherDashboardUseCase,
@@ -57,6 +59,7 @@ import { AnalyticsController } from './presentation/analytics.controller.js';
         new GetAcademicOverviewUseCase(queries, cache, config.analyticsCacheSeconds),
       inject: [DASHBOARD_QUERIES, DASHBOARD_CACHE, APP_CONFIG],
     },
+    useCaseProvider(GetGroupTeachingUseCase, [DASHBOARD_QUERIES]),
     {
       provide: GetTeacherDashboardUseCase,
       useFactory: (queries: DashboardQueries, averages: CourseAverages) =>

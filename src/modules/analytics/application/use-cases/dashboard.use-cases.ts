@@ -3,8 +3,10 @@ import { Role } from '../../../../shared/domain/auth/role.js';
 import { attendanceRate, attendanceRisk } from '../../../attendance/domain/attendance-standing.js';
 import {
   gradeDistribution,
+  TeachingGroupNotFoundException,
   today,
   type AcademicOverview,
+  type GroupTeaching,
   type InstitutionDashboard,
   type PlatformDashboard,
   type TeacherDashboard,
@@ -56,6 +58,19 @@ export class GetAcademicOverviewUseCase {
     return this.cache.remember(`academic:${institutionId}`, this.cacheSeconds, () =>
       this.queries.academic(institutionId, today(this.now())),
     );
+  }
+}
+
+export class GetGroupTeachingUseCase {
+  constructor(private readonly queries: DashboardQueries) {}
+
+  /** The Teachers and timetable of one group. Another institution's group does not exist here. */
+  async execute(institutionId: string, groupId: string): Promise<GroupTeaching> {
+    const group = await this.queries.groupTeaching(institutionId, groupId);
+    if (!group) {
+      throw new TeachingGroupNotFoundException();
+    }
+    return group;
   }
 }
 

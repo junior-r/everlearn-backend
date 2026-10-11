@@ -3,7 +3,7 @@ import type { Prisma } from '../../../shared/infrastructure/prisma/generated/cli
 import { runQuery } from '../../../shared/infrastructure/prisma/prisma-errors.js';
 import { PrismaService } from '../../../shared/infrastructure/prisma/prisma.service.js';
 import type { AttendanceCounts } from '../../attendance/domain/attendance-standing.js';
-import type { AcademicOverview, InstitutionCounts, PlatformDashboard } from '../domain/dashboards.js';
+import type { AcademicOverview, GroupTeaching, InstitutionCounts, PlatformDashboard } from '../domain/dashboards.js';
 import type { AssignedCourse, DashboardQueries, GroupAttendance } from '../domain/ports/analytics.ports.js';
 
 const LARGEST_INSTITUTIONS = 5;
@@ -74,6 +74,62 @@ export class PrismaDashboardQueries implements DashboardQueries {
         }),
       ]);
       return { activeStudents, teachers, activeGroups, pendingReviews, attendance: countsByStatus(attendance) };
+    });
+  }
+
+  groupTeaching(institutionId: string, groupId: string): Promise<GroupTeaching | null> {
+    return runQuery(this.logger, async () => {
+      const person = { select: { id: true, user: { select: { firstName: true, lastName: true } } } };
+      const group = await this.prisma.group.findFirst({
+        where: { id: groupId, institutionId },
+        select: {
+          id: true,
+          name: true,
+          level: true,
+          period: { select: { name: true } },
+          pensum: { select: { name: true } },
+          _count: { select: { enrollments: { where: { status: 'ACTIVE' } } } },
+          courses: {
+            select: {
+              teacher: person,
+              pensumSubject: {
+                select: { weeklyHours: true, subject: { select: { id: true, code: true, name: true } } },
+              },
+              scheduleSlots: { select: { dayOfWeek: true, startMinute: true, endMinute: true, room: true } },
+            },
+            orderBy: { pensumSubject: { subject: { name: 'asc' } } },
+          },
+        },
+      });
+      if (!group) {
+        return null;
+      }
+      return {
+        id: group.id,
+        name: group.name,
+        level: group.level,
+        periodName: group.period.name,
+        pensumName: group.pensum.name,
+        students: group._count.enrollments,
+        courses: group.courses.map(({ teacher, pensumSubject }) => ({
+          subjectId: pensumSubject.subject.id,
+          code: pensumSubject.subject.code,
+          name: pensumSubject.subject.name,
+          weeklyHours: pensumSubject.weeklyHours,
+          teacher: teacher && {
+            membershipId: teacher.id,
+            firstName: teacher.user.firstName,
+            lastName: teacher.user.lastName,
+          },
+        })),
+        schedule: group.courses.flatMap(({ teacher, pensumSubject, scheduleSlots }) =>
+          scheduleSlots.map((slot) => ({
+            ...slot,
+            subjectName: pensumSubject.subject.name,
+            teacherName: teacher && `${teacher.user.firstName} ${teacher.user.lastName}`,
+          })),
+        ),
+      };
     });
   }
 

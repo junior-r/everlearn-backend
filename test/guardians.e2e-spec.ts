@@ -252,27 +252,95 @@ describe('Guardians (HTTP)', () => {
     await as(adminToken, otherInstitutionId).get('/members/search?role=STUDENT&query=gra').expect(403);
   });
 
-  it('lets a Principal read a group and its timetable, and change neither', async () => {
+  it('gives a Principal the Teachers and timetable of a group, and no Student of it', async () => {
     const { alan, groupId, coursePath } = await seed();
     const principal = await ctx.signInAs(Role.COORDINATOR, institutionId, 'principal@example.com');
     const api = as(principal.token);
+    ctx.dashboards.groups.set(`${institutionId}:${groupId}`, {
+      id: groupId,
+      name: '1ro A',
+      level: 1,
+      periodName: '2026-2027',
+      pensumName: 'Bachillerato',
+      students: 1,
+      courses: [
+        {
+          subjectId: 'math',
+          code: 'MAT-1',
+          name: 'Matemática',
+          weeklyHours: 4,
+          teacher: { membershipId: alan.membershipId, firstName: 'Alan', lastName: 'Prueba' },
+        },
+      ],
+      schedule: [],
+    });
 
-    const group = await api.get(`/groups/${groupId}`).expect(200);
-    expect(group.body).toMatchObject({ name: '1ro A' });
-    expect(group.body.courses).toEqual([
-      expect.objectContaining({ teacher: expect.objectContaining({ membershipId: alan.membershipId, firstName: 'Alan' }) }),
-    ]);
-    expect((await api.get(`/groups/${groupId}/schedule`).expect(200)).body).toEqual([]);
+    const group = await api.get(`/analytics/academic/groups/${groupId}`).expect(200);
+    expect(group.body).toMatchObject({ name: '1ro A', students: 1, courses: [{ teacher: { firstName: 'Alan' } }] });
+    expect(JSON.stringify(group.body)).not.toContain('@');
 
+    // The routes of the Institution Admin, which carry the roster with emails, stay closed to them
+    await api.get(`/groups/${groupId}`).expect(403);
+    await api.get(`/groups/${groupId}/schedule`).expect(403);
     await api.get('/groups').expect(403);
-    await api.delete(`/groups/${groupId}`).expect(403);
     await api.put(coursePath).send({ teacherMembershipId: alan.membershipId }).expect(403);
-    await api
-      .post(`/groups/${groupId}/schedule`)
-      .send({ subjectId: coursePath.split('/').at(-1), dayOfWeek: 'MONDAY', startMinute: 480, endMinute: 525 })
-      .expect(403);
-    // Their role opens nothing in another institution
-    await as(principal.token, otherInstitutionId).get(`/groups/${groupId}`).expect(403);
+    // Another institution's group does not exist for them, and their role opens nothing elsewhere
+    const unknown = await api.get('/analytics/academic/groups/0199d0b4-0000-7000-8000-000000000000').expect(404);
+    expect(unknown.body.code).toBe('GROUP_NOT_FOUND');
+    await api.get('/analytics/academic/groups/not-an-id').expect(400);
+    await as(principal.token, otherInstitutionId).get(`/analytics/academic/groups/${groupId}`).expect(403);
+    await as(alan.token).get(`/analytics/academic/groups/${groupId}`).expect(403);
+  });
+
+  it('tells a Guardian of an absence the Teacher records by hand, once', async () => {
+    const { alan, grace, gina, coursePath } = await seed();
+    const emmy = await member(Role.TEACHER, 'Emmy');
+    await link(grace.membershipId, gina.membershipId).expect(200);
+    const teacher = as(alan.token);
+    const started = await teacher.post(`${coursePath}/sessions`).expect(201);
+    const path = `/class-sessions/${started.body.sessionId}/attendance`;
+    const absent = { marks: [{ enrollmentId: grace.membershipId, status: 'ABSENT', note: 'No avisó' }] };
+
+    expect((await teacher.get(path).expect(200)).body).toEqual([
+      expect.objectContaining({ enrollmentId: grace.membershipId, firstName: 'Grace', status: null, takenByHand: false }),
+    ]);
+    const taken = await teacher.put(path).send(absent).expect(200);
+    expect(taken.body).toEqual([expect.objectContaining({ status: 'ABSENT', takenByHand: true })]);
+    await teacher.put(path).send(absent).expect(200);
+
+    const notices = (await as(gina.token, null).get('/notifications').expect(200)).body.items as Array<{
+      type: string;
+      data: Record<string, unknown>;
+    }>;
+    expect(notices.map((notice) => notice.type)).toEqual(['WARD_ATTENDANCE']);
+    expect(notices[0].data).toMatchObject({ studentId: grace.membershipId, studentName: 'Grace Prueba', status: 'ABSENT' });
+
+    // Only the Teacher of the class takes its attendance, and only for its Students
+    await as(emmy.token).put(path).send(absent).expect(403);
+    await as(gina.token).get(path).expect(403);
+    await as(adminToken).put(path).send(absent).expect(403);
+    await teacher.put(path).send({ marks: [{ enrollmentId: grace.membershipId, status: 'SLEEPING' }] }).expect(400);
+    await teacher.put(path).send({ marks: [] }).expect(400);
+    const stranger = await teacher.put(path).send({ marks: [{ enrollmentId: emmy.membershipId, status: 'ABSENT' }] });
+    expect(stranger.status).toBe(400);
+    expect(stranger.body.code).toBe('STUDENT_NOT_IN_CLASS');
+    await teacher.put('/class-sessions/0199d0b4-0000-7000-8000-000000000000/attendance').send(absent).expect(404);
+  });
+
+  it('lists the members of an institution a page at a time, for the office only', async () => {
+    const { alan } = await seed();
+
+    const page = await as(adminToken).get('/members/page').expect(200);
+    expect(page.body).toMatchObject({ total: 4, page: 1, pageSize: 20 });
+    expect(page.body.items).toHaveLength(4);
+    const students = await as(adminToken).get('/members/page?role=STUDENT&query=prueba').expect(200);
+    expect(students.body.items.map((item: { firstName: string }) => item.firstName).sort()).toEqual(['Grace', 'Linus']);
+    expect((await as(adminToken).get('/members/page?page=2').expect(200)).body.items).toEqual([]);
+
+    await as(adminToken).get('/members/page?page=0').expect(400);
+    await as(adminToken).get('/members/page?role=PIRATE').expect(400);
+    await as(alan.token).get('/members/page').expect(403);
+    await as(adminToken, otherInstitutionId).get('/members/page').expect(403);
   });
 
   it('lets the office register Guardians', async () => {

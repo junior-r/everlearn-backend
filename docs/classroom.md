@@ -28,7 +28,16 @@ Only the Teacher assigned to a subject and the Students enrolled in its group ge
 - **A person with several memberships** in the institution enters with the one that takes part in the class.
 - **Config:** `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` (without them the token endpoint answers `VIDEO_UNAVAILABLE`), `INTERNAL_SERVICE_SECRET`.
 
+## Attendance by hand
+
+- **`GET` / `PUT /class-sessions/:sessionId/attendance`** (`TEACHER`, and only the Teacher assigned to that course; another institution's session is "not found"). `PUT` takes `{ marks: [{ enrollmentId, status, note? }] }` with `PRESENT`, `LATE`, `ABSENT` or `EXCUSED`, for Students enrolled in the class (`STUDENT_NOT_IN_CLASS` otherwise), and answers with the sheet.
+- A mark taken by hand is stored as `MANUAL` with who took it; automatic attendance never overwrites it, and it may be taken while the class is open or after it.
+- `ABSENT` and `LATE` tell the Student's Guardians exactly as the automatic ones do (see `notifications-and-messaging.md`).
+- Port `AttendanceBook` (`PrismaAttendanceBook`); use cases in `application/use-cases/attendance.use-cases.ts`.
+
 ## Known gaps
+
+- Attendance by hand has no screen yet: the endpoint is ready and tested, and the Teacher's pages do not call it.
 
 - Sessions are opened by hand and last a nominal 60 minutes; they are not generated from the timetable (`ScheduleSlot`).
 - Attendance measures connection time, not when the Student arrived: LATE means "attended part of the class".

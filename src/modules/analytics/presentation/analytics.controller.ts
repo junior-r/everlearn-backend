@@ -1,4 +1,4 @@
-import { Controller, Get, Inject } from '@nestjs/common';
+import { Controller, Get, Inject, Param, ParseUUIDPipe } from '@nestjs/common';
 import type { AuthenticatedUser } from '../../../shared/domain/auth/authenticated-user.js';
 import { Role } from '../../../shared/domain/auth/role.js';
 import {
@@ -9,12 +9,14 @@ import {
 } from '../../../shared/presentation/decorators/auth.decorators.js';
 import {
   GetAcademicOverviewUseCase,
+  GetGroupTeachingUseCase,
   GetInstitutionDashboardUseCase,
   GetPlatformDashboardUseCase,
   GetTeacherDashboardUseCase,
 } from '../application/use-cases/dashboard.use-cases.js';
 import type {
   AcademicOverview,
+  GroupTeaching,
   InstitutionDashboard,
   PlatformDashboard,
   TeacherDashboard,
@@ -28,6 +30,7 @@ export class AnalyticsController {
     @Inject(GetInstitutionDashboardUseCase) private readonly institutionDashboard: GetInstitutionDashboardUseCase,
     @Inject(GetTeacherDashboardUseCase) private readonly teacherDashboard: GetTeacherDashboardUseCase,
     @Inject(GetAcademicOverviewUseCase) private readonly academicOverview: GetAcademicOverviewUseCase,
+    @Inject(GetGroupTeachingUseCase) private readonly groupTeaching: GetGroupTeachingUseCase,
   ) {}
 
   @Get('platform')
@@ -41,6 +44,16 @@ export class AnalyticsController {
   @Roles(Role.ADMIN, Role.COORDINATOR)
   academic(@CurrentInstitutionId() institutionId: string): Promise<AcademicOverview> {
     return this.academicOverview.execute(institutionId);
+  }
+
+  /** One group for the Principal: Teachers and timetable, and no Student's name or email. */
+  @Get('academic/groups/:groupId')
+  @Roles(Role.ADMIN, Role.COORDINATOR)
+  group(
+    @CurrentInstitutionId() institutionId: string,
+    @Param('groupId', ParseUUIDPipe) groupId: string,
+  ): Promise<GroupTeaching> {
+    return this.groupTeaching.execute(institutionId, groupId);
   }
 
   @Get('institution')

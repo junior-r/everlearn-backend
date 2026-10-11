@@ -22,6 +22,7 @@ The office registers Guardians and links each to their Students; a Guardian then
 - **Layers:** `domain/guardian.ts`, ports `GuardianRepository` and `WardAcademics`, `application/use-cases/guardian.use-cases.ts`, adapters `PrismaGuardianRepository` and `ModuleWardAcademics`.
 - **Notifications:** a Guardian is told, in the app and by email, when a ward's evaluation is published or graded and when the ward is marked absent or late (see `notifications-and-messaging.md`).
 - **Finding who to link:** `GET /members/search?role=&query=` (`ADMIN`, `STAFF`) returns at most 10 members of the institution holding that role whose name or document number contains every word typed (2 characters at least), with their email and document number. The rule (`searchTerms`, `MEMBER_SEARCH_LIMIT`) is in `identity/domain/member.ts`.
+- **The members table:** `GET /members/page?page=&query=&role=` (`ADMIN`, `STAFF`) returns 20 members at a time by last name, with the total; `query` matches name, email or document number. `GET /members` (everyone, unpaged) remains only for the admin pickers that still need it.
 - **Messaging:** a Guardian may write to the office and to the Teachers who currently teach a ward, and those Teachers to them (`reachOf`, see `notifications-and-messaging.md`).
 - **Schema:** `GuardianLink` already existed; no migration.
 

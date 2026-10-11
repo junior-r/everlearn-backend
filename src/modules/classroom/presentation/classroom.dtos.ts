@@ -1,6 +1,23 @@
 import { Type } from 'class-transformer';
-import { IsDate, IsNotEmpty, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
-import { MAX_CHAT_LENGTH, MAX_TRANSCRIPT_LENGTH } from '../domain/classroom.js';
+import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
+  IsDate,
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+  ValidateNested,
+} from 'class-validator';
+import {
+  AttendanceStatus,
+  MAX_ATTENDANCE_NOTE_LENGTH,
+  MAX_CHAT_LENGTH,
+  MAX_TRANSCRIPT_LENGTH,
+} from '../domain/classroom.js';
 
 export class RoomStartedDto {
   @Type(() => Date)
@@ -76,4 +93,26 @@ export class TranscriptSegmentDto {
   @Type(() => Date)
   @IsDate()
   endedAt: Date;
+}
+
+export class AttendanceMarkDto {
+  @IsUUID()
+  enrollmentId: string;
+
+  @IsIn(Object.values(AttendanceStatus))
+  status: AttendanceStatus;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(MAX_ATTENDANCE_NOTE_LENGTH)
+  note?: string;
+}
+
+export class RecordAttendanceDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(200)
+  @ValidateNested({ each: true })
+  @Type(() => AttendanceMarkDto)
+  marks: AttendanceMarkDto[];
 }

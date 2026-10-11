@@ -170,7 +170,7 @@ export class PublishEvaluationUseCase {
             recipient: { guardiansOf: student.membershipId },
             institutionId: actor.institutionId,
             type: NotificationType.WARD_EVALUATION_PUBLISHED,
-            data: { ...about, studentName: `${student.firstName} ${student.lastName}` },
+            data: { ...about, studentId: student.membershipId, studentName: `${student.firstName} ${student.lastName}` },
           },
         ]),
       );
@@ -259,7 +259,12 @@ export class RecordGradesUseCase {
             recipient: { guardiansOf: student.membershipId },
             institutionId: actor.institutionId,
             type: NotificationType.WARD_GRADE_POSTED,
-            data: { ...about, score, studentName: `${student.firstName} ${student.lastName}` },
+            data: {
+              ...about,
+              score,
+              studentId: student.membershipId,
+              studentName: `${student.firstName} ${student.lastName}`,
+            },
             collapseKey,
           },
         ];

@@ -1,15 +1,15 @@
-import { NotificationType, type Notifier } from '../../../../shared/domain/notifications/notifier.js';
+import type { Notifier } from '../../../../shared/domain/notifications/notifier.js';
 import {
   InvalidSessionEventException,
   MAX_CHAT_LENGTH,
   MAX_TRANSCRIPT_LENGTH,
-  AutomaticAttendance,
   takeAttendance,
   type ChatMessage,
   type Participation,
   type TranscriptSegment,
 } from '../../domain/classroom.js';
 import type { SessionRecorder } from '../../domain/ports/classroom.ports.js';
+import { absenceNotices } from '../attendance-notices.js';
 
 /** Trims reported text and refuses it when nothing is left or it is too long. */
 function cleanText(value: string, maxLength: number, label: string): string {
@@ -45,26 +45,15 @@ export class RecordRoomLifecycleUseCase {
     const recorded = await this.recorder.saveAttendance(sessionId, takeAttendance(rollCall));
     const { course, session, students } = rollCall;
     await this.notifier.notify(
-      recorded.flatMap(({ enrollmentId, status }) => {
-        const student = students.find((candidate) => candidate.enrollmentId === enrollmentId);
-        return student && status !== AutomaticAttendance.PRESENT
-          ? [
-              {
-                recipient: { guardiansOf: student.membershipId },
-                institutionId: course.institutionId,
-                type: NotificationType.WARD_ATTENDANCE,
-                data: {
-                  studentName: `${student.firstName} ${student.lastName}`,
-                  subjectName: course.subjectName,
-                  groupName: course.groupName,
-                  status,
-                  date: session.from.toISOString(),
-                },
-                dedupeKey: `attendance:${sessionId}:${enrollmentId}`,
-              },
-            ]
-          : [];
-      }),
+      absenceNotices(
+        sessionId,
+        course,
+        session.from,
+        recorded.flatMap(({ enrollmentId, status }) => {
+          const student = students.find((candidate) => candidate.enrollmentId === enrollmentId);
+          return student ? [{ ...student, status }] : [];
+        }),
+      ),
     );
   }
 }

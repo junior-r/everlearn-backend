@@ -25,6 +25,15 @@ export interface MemberMatch {
 }
 
 export const MEMBER_SEARCH_LIMIT = 10;
+export const MEMBER_PAGE_SIZE = 20;
+
+/** One page of the members of an institution, with how many there are in all. */
+export interface MemberPage {
+  items: Member[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
 const MEMBER_SEARCH_MIN_LENGTH = 2;
 const MEMBER_SEARCH_MAX_TERMS = 5;
 

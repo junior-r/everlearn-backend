@@ -31,6 +31,7 @@ import {
   PERIOD_REPOSITORY,
 } from '../../src/modules/academics/domain/ports/group.repositories.js';
 import {
+  ATTENDANCE_BOOK,
   CLASSROOM_REPOSITORY,
   SESSION_RECORDER,
   VIDEO_TOKEN_ISSUER,
@@ -290,6 +291,8 @@ export async function createTestApp(extraControllers: Type[] = [], options: Test
     .overrideProvider(CLASSROOM_REPOSITORY)
     .useValue(fakes.classroom)
     .overrideProvider(SESSION_RECORDER)
+    .useValue(fakes.classroom)
+    .overrideProvider(ATTENDANCE_BOOK)
     .useValue(fakes.classroom)
     .overrideProvider(VIDEO_TOKEN_ISSUER)
     .useValue(fakes.videoTokens)

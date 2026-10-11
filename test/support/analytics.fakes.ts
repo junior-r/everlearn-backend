@@ -1,5 +1,6 @@
 import type {
   AcademicOverview,
+  GroupTeaching,
   InstitutionCounts,
   PlatformDashboard,
 } from '../../src/modules/analytics/domain/dashboards.js';
@@ -39,6 +40,8 @@ export class InMemoryDashboardQueries implements DashboardQueries {
   };
   readonly institutions = new Map<string, InstitutionCounts>();
   readonly academics = new Map<string, AcademicOverview>();
+  /** Groups by "institutionId:groupId". */
+  readonly groups = new Map<string, GroupTeaching>();
   readonly teachers: TeacherFigures[] = [];
   /** How many times each figure was counted, to see the cache at work. */
   readonly counted = { platform: 0, institution: 0 };
@@ -60,6 +63,10 @@ export class InMemoryDashboardQueries implements DashboardQueries {
     this.counted.institution += 1;
     this.askedDays.push(day);
     return Promise.resolve(this.institutions.get(institutionId) ?? NO_COUNTS);
+  }
+
+  groupTeaching(institutionId: string, groupId: string): Promise<GroupTeaching | null> {
+    return Promise.resolve(this.groups.get(`${institutionId}:${groupId}`) ?? null);
   }
 
   academic(institutionId: string, day: Date): Promise<AcademicOverview> {

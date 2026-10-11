@@ -1,5 +1,5 @@
 import type { StudentAttendance } from '../../../attendance/domain/attendance-standing.js';
-import type { AcademicOverview, InstitutionCounts, PlatformDashboard } from '../dashboards.js';
+import type { AcademicOverview, GroupTeaching, InstitutionCounts, PlatformDashboard } from '../dashboards.js';
 
 export const DASHBOARD_QUERIES = Symbol('DashboardQueries');
 export const DASHBOARD_CACHE = Symbol('DashboardCache');
@@ -25,6 +25,8 @@ export interface DashboardQueries {
   institution(institutionId: string, day: Date): Promise<InstitutionCounts>;
   /** Groups of periods running on `day`, every pensum, and each Teacher's load in those periods. */
   academic(institutionId: string, day: Date): Promise<AcademicOverview>;
+  /** One group of the institution with its Teachers and timetable; null when it is not the institution's. */
+  groupTeaching(institutionId: string, groupId: string): Promise<GroupTeaching | null>;
   /** The courses these Teacher memberships have in the institution, in periods running on `day`. */
   coursesOf(institutionId: string, teacherMembershipIds: string[], day: Date): Promise<AssignedCourse[]>;
   /** Unpublished evaluations of those same courses. */

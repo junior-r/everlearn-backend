@@ -5,11 +5,13 @@ import { normalizeEmail, type User } from '../../domain/entities/user.entity.js'
 import { AccountSuspendedException } from '../../domain/exceptions/identity.exceptions.js';
 import {
   assertCanRegister,
+  MEMBER_PAGE_SIZE,
   MEMBER_SEARCH_LIMIT,
   requiresOnboarding,
   searchTerms,
   type Member,
   type MemberMatch,
+  type MemberPage,
 } from '../../domain/member.js';
 import type { MemberRepository } from '../../domain/ports/member.repository.js';
 import type { PasswordHasher } from '../../domain/ports/password-hasher.js';
@@ -97,6 +99,25 @@ export class ListMembersUseCase {
 
   execute(institutionId: string): Promise<Member[]> {
     return this.members.listByInstitution(institutionId);
+  }
+}
+
+export class PageMembersUseCase {
+  constructor(private readonly members: MemberRepository) {}
+
+  /** A page of the members of an institution, optionally narrowed by what was typed and by role. */
+  async execute(
+    institutionId: string,
+    request: { page?: number; query?: string; role?: Role },
+  ): Promise<MemberPage> {
+    const page = Math.max(1, Math.trunc(request.page ?? 1));
+    const { items, total } = await this.members.page(institutionId, {
+      terms: searchTerms(request.query ?? ''),
+      role: request.role ?? null,
+      skip: (page - 1) * MEMBER_PAGE_SIZE,
+      take: MEMBER_PAGE_SIZE,
+    });
+    return { items, total, page, pageSize: MEMBER_PAGE_SIZE };
   }
 }
 

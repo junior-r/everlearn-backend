@@ -32,6 +32,15 @@ export interface MemberRepository {
   addMembership(membership: NewMembership): Promise<Member>;
   listByInstitution(institutionId: string): Promise<Member[]>;
   /**
+   * `take` members after skipping `skip`, by last name, and how many match in
+   * all. Every term must be in the name, email or document number; `role`
+   * narrows to one role, null to none.
+   */
+  page(
+    institutionId: string,
+    filter: { terms: string[]; role: Role | null; skip: number; take: number },
+  ): Promise<{ items: Member[]; total: number }>;
+  /**
    * The first `limit` members holding `role` whose name or document number
    * contains every term, ignoring case, by last name.
    */

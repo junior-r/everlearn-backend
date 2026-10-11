@@ -4,7 +4,9 @@ import {
   ClassSessionNotFoundException,
   SessionStatus,
   type AttendanceMark,
-  type AutomaticAttendance,
+  type AttendanceSheet,
+  type AttendanceStatus,
+  type ManualAttendanceMark,
   type ChatMessage,
   type ClassroomCourse,
   type Participation,
@@ -14,6 +16,7 @@ import {
   type TranscriptSegment,
 } from '../../src/modules/classroom/domain/classroom.js';
 import type {
+  AttendanceBook,
   ClassroomRepository,
   SessionRecorder,
   VideoGrant,
@@ -45,11 +48,11 @@ const isOpen = (session: StoredSession) =>
  * Sessions and what was recorded about them. Courses, teachers and
  * enrollments are read from the academics fakes, as the real one reads their tables.
  */
-export class InMemoryClassroomRepository implements ClassroomRepository, SessionRecorder {
+export class InMemoryClassroomRepository implements ClassroomRepository, SessionRecorder, AttendanceBook {
   readonly sessions: StoredSession[] = [];
   readonly participations: StoredParticipation[] = [];
   /** Automatic attendance by "sessionId:membershipId"; a Student's membership id stands in for the enrollment. */
-  readonly attendance = new Map<string, AutomaticAttendance>();
+  readonly attendance = new Map<string, AttendanceStatus>();
   /** Keys whose attendance a person took by hand. */
   readonly manualAttendance = new Set<string>();
   readonly chatMessages: ChatMessage[] = [];
@@ -257,6 +260,35 @@ export class InMemoryClassroomRepository implements ClassroomRepository, Session
       this.attendance.set(`${sessionId}:${enrollmentId}`, status);
     }
     return automatic;
+  }
+
+  sheet(institutionId: string, sessionId: string): Promise<AttendanceSheet | null> {
+    const session = this.sessions.find((candidate) => candidate.id === sessionId);
+    const group = this.groups.rows.find((row) => row.id === session?.groupId && row.institutionId === institutionId);
+    if (!session || !group) {
+      return Promise.resolve(null);
+    }
+    return Promise.resolve({
+      startsAt: session.actualStartedAt ?? session.startsAt,
+      teacherMembershipId: group.teachers.get(session.subjectId) ?? null,
+      course: { institutionId, subjectName: session.subjectId, groupName: group.name },
+      students: group.studentIds.map((studentId) => ({
+        enrollmentId: studentId,
+        membershipId: studentId,
+        firstName: this.directory.describe(studentId).firstName,
+        lastName: this.directory.describe(studentId).lastName,
+        status: this.attendance.get(`${sessionId}:${studentId}`) ?? null,
+        takenByHand: this.manualAttendance.has(`${sessionId}:${studentId}`),
+      })),
+    });
+  }
+
+  record(sessionId: string, _recordedById: string, marks: ManualAttendanceMark[]): Promise<void> {
+    for (const { enrollmentId, status } of marks) {
+      this.attendance.set(`${sessionId}:${enrollmentId}`, status);
+      this.manualAttendance.add(`${sessionId}:${enrollmentId}`);
+    }
+    return Promise.resolve();
   }
 
   async addChatMessage(message: ChatMessage): Promise<void> {

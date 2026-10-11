@@ -24,6 +24,7 @@ import { LoginWithPasswordUseCase } from './application/use-cases/login-with-pas
 import { LogoutUseCase } from './application/use-cases/logout.use-case.js';
 import {
   ListMembersUseCase,
+  PageMembersUseCase,
   SearchMembersUseCase,
   RegisterMemberUseCase,
 } from './application/use-cases/member.use-cases.js';
@@ -109,6 +110,7 @@ const resetLogger = new Logger('PasswordReset');
     useCaseProvider(EnsurePlatformAdminUseCase, [USER_REPOSITORY, PASSWORD_HASHER]),
     useCaseProvider(ListMembersUseCase, [MEMBER_REPOSITORY]),
     useCaseProvider(SearchMembersUseCase, [MEMBER_REPOSITORY]),
+    useCaseProvider(PageMembersUseCase, [MEMBER_REPOSITORY]),
     {
       provide: ChangePasswordUseCase,
       useFactory: (

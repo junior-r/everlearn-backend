@@ -492,7 +492,7 @@ describe('announcing a published evaluation', () => {
     ]);
     expect(ctx.notifier.requests[1]).toMatchObject({
       type: 'WARD_EVALUATION_PUBLISHED',
-      data: { evaluationId: draft.id, evaluationTitle: 'Examen parcial', studentName: 'Grace Prueba' },
+      data: { evaluationId: draft.id, evaluationTitle: 'Examen parcial', studentId: ctx.grace.id, studentName: 'Grace Prueba' },
     });
     expect(ctx.notifier.requests[0]).toMatchObject({
       institutionId: A,
@@ -534,7 +534,7 @@ describe('announcing a published evaluation', () => {
       {
         recipient: { guardiansOf: ctx.grace.id },
         type: 'WARD_GRADE_POSTED',
-        data: { score: 18, maxScore: 20, studentName: 'Grace Prueba' },
+        data: { score: 18, maxScore: 20, studentId: ctx.grace.id, studentName: 'Grace Prueba' },
         collapseKey,
       },
     ]);

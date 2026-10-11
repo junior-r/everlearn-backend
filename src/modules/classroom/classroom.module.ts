@@ -1,3 +1,8 @@
+import {
+  GetSessionAttendanceUseCase,
+  RecordAttendanceByHandUseCase,
+} from './application/use-cases/attendance.use-cases.js';
+import { PrismaAttendanceBook } from './infrastructure/prisma-attendance-book.js';
 import { Module } from '@nestjs/common';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import { APP_CONFIG, type AppConfig } from '../../config/app-config.js';
@@ -15,6 +20,7 @@ import {
   RecordTranscriptSegmentUseCase,
 } from './application/use-cases/session-recording.use-cases.js';
 import {
+  ATTENDANCE_BOOK,
   CLASSROOM_REPOSITORY,
   SESSION_RECORDER,
   VIDEO_TOKEN_ISSUER,
@@ -34,6 +40,7 @@ import { InternalClassroomController } from './presentation/internal-classroom.c
   providers: [
     { provide: CLASSROOM_REPOSITORY, useClass: PrismaClassroomRepository },
     { provide: SESSION_RECORDER, useClass: PrismaSessionRecorder },
+    { provide: ATTENDANCE_BOOK, useClass: PrismaAttendanceBook },
     {
       provide: VIDEO_TOKEN_ISSUER,
       useFactory: (jwt: JwtService, config: AppConfig) => new LiveKitTokenIssuer(jwt, config.livekit),
@@ -43,6 +50,8 @@ import { InternalClassroomController } from './presentation/internal-classroom.c
     useCaseProvider(IssueClassroomTokenUseCase, [CLASSROOM_REPOSITORY, VIDEO_TOKEN_ISSUER]),
     useCaseProvider(StartClassSessionUseCase, [CLASSROOM_REPOSITORY]),
     useCaseProvider(RecordRoomLifecycleUseCase, [SESSION_RECORDER, NOTIFIER]),
+    useCaseProvider(GetSessionAttendanceUseCase, [ATTENDANCE_BOOK]),
+    useCaseProvider(RecordAttendanceByHandUseCase, [ATTENDANCE_BOOK, NOTIFIER]),
     useCaseProvider(RecordParticipationUseCase, [SESSION_RECORDER]),
     useCaseProvider(RecordChatMessageUseCase, [SESSION_RECORDER]),
     useCaseProvider(RecordTranscriptSegmentUseCase, [SESSION_RECORDER]),

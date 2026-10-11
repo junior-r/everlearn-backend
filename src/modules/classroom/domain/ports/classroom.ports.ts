@@ -1,8 +1,10 @@
 import type {
   AttendanceMark,
+  AttendanceSheet,
   ChatMessage,
   ClassroomCourse,
   ClassroomRole,
+  ManualAttendanceMark,
   Participation,
   RollCall,
   SessionAccess,
@@ -13,6 +15,7 @@ import type {
 export const CLASSROOM_REPOSITORY = Symbol('ClassroomRepository');
 export const SESSION_RECORDER = Symbol('SessionRecorder');
 export const VIDEO_TOKEN_ISSUER = Symbol('VideoTokenIssuer');
+export const ATTENDANCE_BOOK = Symbol('AttendanceBook');
 
 export interface ClassroomRepository {
   /** The courses a membership teaches, or follows through an active enrollment, inside the institution. */
@@ -64,4 +67,12 @@ export interface VideoGrant {
 export interface VideoTokenIssuer {
   /** Rejects with VideoUnavailableException when no video server is configured. */
   issue(grant: VideoGrant): Promise<string>;
+}
+
+/** Attendance as a person takes it, class by class. */
+export interface AttendanceBook {
+  /** Resolves to null unless the session belongs to the institution. */
+  sheet(institutionId: string, sessionId: string): Promise<AttendanceSheet | null>;
+  /** Stores marks as taken by hand by `recordedById`, replacing whatever stood for those Students. */
+  record(sessionId: string, recordedById: string, marks: ManualAttendanceMark[]): Promise<void>;
 }

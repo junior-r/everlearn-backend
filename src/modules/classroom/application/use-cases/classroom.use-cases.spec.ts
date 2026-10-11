@@ -21,10 +21,12 @@ import {
   NotClassParticipantException,
   NotCourseTeacherException,
   secondsConnected,
+  StudentNotInClassException,
   SessionStatus,
   VideoUnavailableException,
 } from '../../domain/classroom.js';
 import { LiveKitTokenIssuer } from '../../infrastructure/livekit-token-issuer.js';
+import { GetSessionAttendanceUseCase, RecordAttendanceByHandUseCase } from './attendance.use-cases.js';
 import {
   IssueClassroomTokenUseCase,
   ListMyCoursesUseCase,
@@ -91,6 +93,8 @@ function setup() {
     list: new ListMyCoursesUseCase(classroom),
     issue: new IssueClassroomTokenUseCase(classroom, tokens),
     lifecycle: new RecordRoomLifecycleUseCase(classroom, notifier),
+    sheet: new GetSessionAttendanceUseCase(classroom),
+    byHand: new RecordAttendanceByHandUseCase(classroom, notifier),
     participation: new RecordParticipationUseCase(classroom),
     chat: new RecordChatMessageUseCase(classroom),
     transcript: new RecordTranscriptSegmentUseCase(classroom),
@@ -378,13 +382,14 @@ describe('recording a live class', () => {
         institutionId: A,
         type: 'WARD_ATTENDANCE',
         data: {
+          studentId: absent.ctx.grace.id,
           studentName: 'Grace Prueba',
           subjectName: MATH,
           groupName: '1ro A',
           status: 'ABSENT',
           date: at(0).toISOString(),
         },
-        dedupeKey: `attendance:${absent.sessionId}:${absent.ctx.grace.id}`,
+        dedupeKey: `attendance:${absent.sessionId}:${absent.ctx.grace.id}:ABSENT`,
       },
     ]);
 
@@ -513,5 +518,97 @@ describe('LiveKit access tokens', () => {
     await expect(new LiveKitTokenIssuer(jwt, null).issue(grant)).rejects.toBeInstanceOf(
       VideoUnavailableException,
     );
+  });
+});
+
+describe('attendance taken by hand', () => {
+  const actor = (claim: MembershipClaim, institutionId = A) => ({ institutionId, memberships: [claim] });
+  const mark = (enrollmentId: string, status: 'PRESENT' | 'LATE' | 'ABSENT' | 'EXCUSED', note: string | null = null) => ({
+    enrollmentId,
+    status,
+    note,
+  });
+
+  it('lets the Teacher of the class mark its Students, and shows the marks back', async () => {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+    expect(await ctx.sheet.execute(actor(ctx.alan), sessionId)).toEqual([
+      expect.objectContaining({ enrollmentId: ctx.grace.id, firstName: 'Grace', status: null, takenByHand: false }),
+    ]);
+
+    const sheet = await ctx.byHand.execute(actor(ctx.alan), sessionId, [mark(ctx.grace.id, 'EXCUSED', '  Cita médica ')]);
+
+    expect(sheet).toEqual([expect.objectContaining({ enrollmentId: ctx.grace.id, status: 'EXCUSED', takenByHand: true })]);
+  });
+
+  it('tells the Guardians of an absence or a late arrival recorded by hand, exactly as the automatic one', async () => {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+
+    await ctx.byHand.execute(actor(ctx.alan), sessionId, [mark(ctx.grace.id, 'ABSENT')]);
+
+    expect(ctx.notifier.requests).toEqual([
+      {
+        recipient: { guardiansOf: ctx.grace.id },
+        institutionId: A,
+        type: 'WARD_ATTENDANCE',
+        data: expect.objectContaining({ studentId: ctx.grace.id, studentName: 'Grace Prueba', groupName: '1ro A', status: 'ABSENT' }),
+        dedupeKey: `attendance:${sessionId}:${ctx.grace.id}:ABSENT`,
+      },
+    ]);
+
+    // Saving the same mark again is not news; a different one is
+    await ctx.byHand.execute(actor(ctx.alan), sessionId, [mark(ctx.grace.id, 'ABSENT')]);
+    expect(ctx.notifier.requests).toHaveLength(1);
+    await ctx.byHand.execute(actor(ctx.alan), sessionId, [mark(ctx.grace.id, 'LATE')]);
+    expect(ctx.notifier.requests.map((request) => request.data.status)).toEqual(['ABSENT', 'LATE']);
+  });
+
+  it('tells nobody about a Student who attended or was excused', async () => {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+
+    await ctx.byHand.execute(actor(ctx.alan), sessionId, [mark(ctx.grace.id, 'PRESENT')]);
+    await ctx.byHand.execute(actor(ctx.alan), sessionId, [mark(ctx.grace.id, 'EXCUSED')]);
+
+    expect(ctx.notifier.requests).toEqual([]);
+  });
+
+  it('stands over automatic attendance: the room closing afterwards changes and announces nothing', async () => {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+    await ctx.byHand.execute(actor(ctx.alan), sessionId, [mark(ctx.grace.id, 'PRESENT')]);
+
+    await ctx.lifecycle.finished(sessionId, at(100));
+
+    expect(ctx.classroom.attendance.get(`${sessionId}:${ctx.grace.id}`)).toBe('PRESENT');
+    expect(ctx.notifier.requests).toEqual([]);
+  });
+
+  it('is closed to every other Teacher, to Students and to other institutions', async () => {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+    const marks = [mark(ctx.grace.id, 'ABSENT')];
+
+    await expect(ctx.byHand.execute(actor(ctx.emmy), sessionId, marks)).rejects.toBeInstanceOf(NotCourseTeacherException);
+    await expect(ctx.byHand.execute(actor(ctx.grace), sessionId, marks)).rejects.toBeInstanceOf(NotCourseTeacherException);
+    await expect(ctx.sheet.execute(actor(ctx.emmy), sessionId)).rejects.toBeInstanceOf(NotCourseTeacherException);
+    await expect(ctx.byHand.execute(actor(ctx.alan, B), sessionId, marks)).rejects.toBeInstanceOf(
+      ClassSessionNotFoundException,
+    );
+    expect(ctx.classroom.attendance.size).toBe(0);
+    expect(ctx.notifier.requests).toEqual([]);
+  });
+
+  it('refuses a mark for someone who is not enrolled in the class, and stores none of the list', async () => {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+
+    await expect(
+      ctx.byHand.execute(actor(ctx.alan), sessionId, [mark(ctx.grace.id, 'ABSENT'), mark(ctx.linus.id, 'ABSENT')]),
+    ).rejects.toBeInstanceOf(StudentNotInClassException);
+
+    expect(ctx.classroom.attendance.size).toBe(0);
+    expect(ctx.notifier.requests).toEqual([]);
   });
 });

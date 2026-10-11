@@ -11,7 +11,12 @@ import {
 import { registrableRoles } from '../../domain/member.js';
 import { EnsurePlatformAdminUseCase } from './ensure-platform-admin.use-case.js';
 import { LoginWithPasswordUseCase } from './login-with-password.use-case.js';
-import { ListMembersUseCase, RegisterMemberUseCase, SearchMembersUseCase } from './member.use-cases.js';
+import {
+  ListMembersUseCase,
+  PageMembersUseCase,
+  RegisterMemberUseCase,
+  SearchMembersUseCase,
+} from './member.use-cases.js';
 
 const INSTITUTION = 'inst-1';
 
@@ -395,6 +400,54 @@ describe('SearchMembersUseCase', () => {
     expect(await names(Role.STUDENT, ' g ')).toEqual([]);
     expect(await names(Role.STUDENT, '')).toEqual([]);
     expect(await names(Role.STUDENT, 'clon')).toHaveLength(10);
+  });
+});
+
+describe('PageMembersUseCase', () => {
+  async function school() {
+    const ctx = setup();
+    for (let index = 0; index < 45; index += 1) {
+      await ctx.register.execute({
+        ...student,
+        actor: platformAdmin,
+        email: `member${index}@example.com`,
+        firstName: 'Estudiante',
+        lastName: `Apellido ${String(index).padStart(2, '0')}`,
+        role: index < 43 ? Role.STUDENT : Role.TEACHER,
+        institutionId: index === 44 ? 'inst-2' : INSTITUTION,
+      });
+    }
+    return { ...ctx, pages: new PageMembersUseCase(ctx.members) };
+  }
+
+  it('returns twenty members at a time, by last name, with how many there are in all', async () => {
+    const { pages } = await school();
+
+    const first = await pages.execute(INSTITUTION, {});
+    const last = await pages.execute(INSTITUTION, { page: 3 });
+
+    expect(first).toMatchObject({ total: 44, page: 1, pageSize: 20 });
+    expect(first.items).toHaveLength(20);
+    expect(first.items[0].lastName).toBe('Apellido 00');
+    expect(last.items.map((member) => member.lastName)).toEqual([
+      'Apellido 40',
+      'Apellido 41',
+      'Apellido 42',
+      'Apellido 43',
+    ]);
+    expect((await pages.execute(INSTITUTION, { page: 9 })).items).toEqual([]);
+  });
+
+  it('narrows by what was typed, including the email, and by role, inside the institution only', async () => {
+    const { pages } = await school();
+
+    expect((await pages.execute(INSTITUTION, { query: 'MEMBER7@' })).items.map((member) => member.email)).toEqual([
+      'member7@example.com',
+    ]);
+    expect(await pages.execute(INSTITUTION, { role: Role.TEACHER })).toMatchObject({ total: 1 });
+    expect(await pages.execute(INSTITUTION, { query: 'apellido 42', role: Role.STUDENT })).toMatchObject({ total: 1 });
+    expect(await pages.execute('inst-2', {})).toMatchObject({ total: 1 });
+    expect(await pages.execute(INSTITUTION, { query: 'nadie' })).toMatchObject({ total: 0, items: [] });
   });
 });
 

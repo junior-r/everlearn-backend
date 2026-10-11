@@ -4,8 +4,9 @@ import {
   InMemoryDashboardQueries,
 } from '../../../../../test/support/analytics.fakes.js';
 import { Role } from '../../../../shared/domain/auth/role.js';
-import { gradeDistribution, today } from '../../domain/dashboards.js';
+import { gradeDistribution, TeachingGroupNotFoundException, today } from '../../domain/dashboards.js';
 import {
+  GetGroupTeachingUseCase,
   GetInstitutionDashboardUseCase,
   GetPlatformDashboardUseCase,
   GetTeacherDashboardUseCase,
@@ -225,5 +226,28 @@ describe('a Teacher\'s dashboard', () => {
     });
 
     expect(dashboard.activeCourses).toBe(0);
+  });
+});
+
+describe('a group for whoever oversees the teaching', () => {
+  const group = {
+    id: 'group-1',
+    name: '1ro A',
+    level: 1,
+    periodName: '2026-2027',
+    pensumName: 'Bachillerato',
+    students: 28,
+    courses: [],
+    schedule: [],
+  };
+
+  it("returns the institution's own group, and treats any other as one that does not exist", async () => {
+    const queries = new InMemoryDashboardQueries();
+    queries.groups.set('institution-a:group-1', group);
+    const teaching = new GetGroupTeachingUseCase(queries);
+
+    await expect(teaching.execute('institution-a', 'group-1')).resolves.toEqual(group);
+    await expect(teaching.execute('institution-b', 'group-1')).rejects.toBeInstanceOf(TeachingGroupNotFoundException);
+    await expect(teaching.execute('institution-a', 'group-2')).rejects.toBeInstanceOf(TeachingGroupNotFoundException);
   });
 });
