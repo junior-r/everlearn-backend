@@ -30,6 +30,13 @@ export interface AppConfig {
   rateLimit: RateLimitConfig;
   /** Credentials of the first Platform Admin, created on start if missing. Null disables this. */
   platformAdmin: PlatformAdminConfig | null;
+  /** The ocr-server microservice. Null uses the built-in mock, for running without Docker. */
+  ocr: OcrServiceConfig | null;
+}
+
+export interface OcrServiceConfig {
+  url: string;
+  internalSecret: string;
 }
 
 export interface PlatformAdminConfig {
@@ -122,5 +129,8 @@ export function loadAppConfig(env: Env): AppConfig {
       authWindowSeconds: positiveInt(env, 'RATE_LIMIT_AUTH_WINDOW_SECONDS', 60),
     },
     platformAdmin: platformAdminConfig(env),
+    ocr: env.OCR_SERVICE_URL
+      ? { url: env.OCR_SERVICE_URL, internalSecret: required(env, 'INTERNAL_SERVICE_SECRET') }
+      : null,
   };
 }

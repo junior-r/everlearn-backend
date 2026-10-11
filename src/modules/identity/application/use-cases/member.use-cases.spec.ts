@@ -8,6 +8,7 @@ import {
   InstitutionNotFoundException,
   MemberRoleNotAllowedException,
 } from '../../domain/exceptions/identity.exceptions.js';
+import { registrableRoles } from '../../domain/member.js';
 import { EnsurePlatformAdminUseCase } from './ensure-platform-admin.use-case.js';
 import { LoginWithPasswordUseCase } from './login-with-password.use-case.js';
 import { ListMembersUseCase, RegisterMemberUseCase } from './member.use-cases.js';
@@ -99,7 +100,7 @@ describe('RegisterMemberUseCase', () => {
     expect(first.temporaryPassword).not.toBe(second.temporaryPassword);
   });
 
-  it.each([Role.ADMIN, Role.COORDINATOR, Role.GUARDIAN])(
+  it.each([Role.ADMIN, Role.GUARDIAN])(
     'forbids an Institution Admin from registering a %s',
     async (role) => {
       const { register, users } = setup();
@@ -110,6 +111,93 @@ describe('RegisterMemberUseCase', () => {
       expect(users.users.size).toBe(0);
     },
   );
+
+  describe('the registration hierarchy', () => {
+    const staff: AuthenticatedUser = {
+      ...institutionAdmin,
+      userId: 'staff-1',
+      memberships: [{ id: 'm-staff', institutionId: INSTITUTION, role: Role.STAFF }],
+    };
+    const everyRole = Object.values(Role);
+    const allowedFor = (actor: AuthenticatedUser, institutionId = INSTITUTION) =>
+      registrableRoles(actor, institutionId);
+
+    it('lets each level register only the levels below it', () => {
+      expect(allowedFor(platformAdmin)).toEqual([
+        Role.ADMIN, Role.COORDINATOR, Role.TEACHER, Role.STAFF, Role.STUDENT,
+      ]);
+      expect(allowedFor(institutionAdmin)).toEqual([
+        Role.COORDINATOR, Role.TEACHER, Role.STAFF, Role.STUDENT,
+      ]);
+      expect(allowedFor(staff)).toEqual([Role.STUDENT]);
+    });
+
+    it.each([Role.TEACHER, Role.STUDENT, Role.COORDINATOR, Role.GUARDIAN])(
+      'lets a %s register nobody',
+      (role) => {
+        const actor = { ...staff, memberships: [{ id: 'm', institutionId: INSTITUTION, role }] };
+
+        expect(allowedFor(actor)).toEqual([]);
+      },
+    );
+
+    it('never lets anyone register a peer or a superior', () => {
+      expect(allowedFor(institutionAdmin)).not.toContain(Role.ADMIN);
+      expect(allowedFor(staff)).not.toContain(Role.STAFF);
+      for (const role of everyRole) {
+        expect(allowedFor({ ...staff, memberships: [] })).not.toContain(role);
+      }
+    });
+
+    it('judges the actor by their role in the institution being acted on, not elsewhere', () => {
+      // Institution Admin of another institution, Staff here
+      const actor: AuthenticatedUser = {
+        ...staff,
+        memberships: [
+          { id: 'm1', institutionId: 'other-institution', role: Role.ADMIN },
+          { id: 'm2', institutionId: INSTITUTION, role: Role.STAFF },
+        ],
+      };
+
+      expect(allowedFor(actor)).toEqual([Role.STUDENT]);
+      expect(allowedFor(actor, 'other-institution')).toContain(Role.TEACHER);
+      expect(allowedFor(actor, 'a-third-institution')).toEqual([]);
+    });
+
+    it('uses the higher role when someone is both Admin and Staff in the same institution', () => {
+      const actor: AuthenticatedUser = {
+        ...staff,
+        memberships: [
+          { id: 'm1', institutionId: INSTITUTION, role: Role.STAFF },
+          { id: 'm2', institutionId: INSTITUTION, role: Role.ADMIN },
+        ],
+      };
+
+      expect(allowedFor(actor)).toContain(Role.TEACHER);
+    });
+
+    it('lets Staff register a Student but not a Teacher', async () => {
+      const { register } = setup();
+
+      await expect(register.execute({ ...student, actor: staff })).resolves.toMatchObject({
+        member: { role: Role.STUDENT, status: UserStatus.PENDING_ONBOARDING },
+      });
+      await expect(
+        register.execute({ ...student, actor: staff, email: 't@example.com', role: Role.TEACHER }),
+      ).rejects.toBeInstanceOf(MemberRoleNotAllowedException);
+    });
+
+    it.each([Role.STAFF, Role.COORDINATOR])(
+      'lets an Institution Admin register %s, who must still pass onboarding',
+      async (role) => {
+        const { register } = setup();
+
+        const { member } = await register.execute({ ...student, role });
+
+        expect(member).toMatchObject({ role, status: UserStatus.PENDING_ONBOARDING, isActive: false });
+      },
+    );
+  });
 
   it('lets a Platform Admin appoint an Institution Admin, who is active immediately', async () => {
     const { register, login } = setup();
@@ -224,7 +312,13 @@ describe('ListMembersUseCase', () => {
   it("lists only the institution's own members", async () => {
     const { register, members } = setup();
     await register.execute(student);
-    await register.execute({ ...student, email: 'other@example.com', institutionId: 'inst-2' });
+    // Only a Platform Admin may act on an institution they hold no role in
+    await register.execute({
+      ...student,
+      actor: platformAdmin,
+      email: 'other@example.com',
+      institutionId: 'inst-2',
+    });
 
     const listed = await new ListMembersUseCase(members).execute(INSTITUTION);
 

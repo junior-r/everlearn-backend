@@ -14,9 +14,12 @@ import {
 import type { Member } from '../../domain/member.js';
 import { RegisterMemberDto } from '../dtos/member.dtos.js';
 
-/** Member management for the institution in the `x-institution-id` header. */
+/**
+ * Member management for the institution in the `x-institution-id` header.
+ * Staff may enter, but the use case limits them to registering Students.
+ */
 @Controller('members')
-@Roles(Role.ADMIN)
+@Roles(Role.ADMIN, Role.STAFF)
 export class MembersController {
   constructor(
     @Inject(RegisterMemberUseCase) private readonly registerMember: RegisterMemberUseCase,

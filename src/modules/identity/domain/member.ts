@@ -15,18 +15,34 @@ export interface Member {
   isActive: boolean;
 }
 
-const REGISTRABLE_BY_INSTITUTION_ADMIN: Role[] = [Role.TEACHER, Role.STUDENT];
-const REGISTRABLE_BY_PLATFORM_ADMIN: Role[] = [Role.ADMIN, Role.TEACHER, Role.STUDENT];
+const INSTITUTION_STAFF: Role[] = [Role.COORDINATOR, Role.TEACHER, Role.STAFF, Role.STUDENT];
 
 /**
- * Institution Admins register Teachers and Students. Only a Platform Admin
- * can appoint an Institution Admin, so admins cannot multiply themselves.
+ * Who may register whom. Each level appoints only the levels below it, so
+ * nobody can create a peer or promote themselves:
+ * Platform Admin → Institution Admins (and everyone below);
+ * Institution Admin → Directivos, Teachers, Staff and Students;
+ * Staff → Students.
  */
-export function assertCanRegister(actor: AuthenticatedUser, role: Role): void {
-  const allowed = actor.isPlatformAdmin
-    ? REGISTRABLE_BY_PLATFORM_ADMIN
-    : REGISTRABLE_BY_INSTITUTION_ADMIN;
-  if (!allowed.includes(role)) {
+export function registrableRoles(actor: AuthenticatedUser, institutionId: string): Role[] {
+  if (actor.isPlatformAdmin) {
+    return [Role.ADMIN, ...INSTITUTION_STAFF];
+  }
+  const roles = actor.memberships
+    .filter((membership) => membership.institutionId === institutionId)
+    .map((membership) => membership.role);
+  if (roles.includes(Role.ADMIN)) {
+    return INSTITUTION_STAFF;
+  }
+  return roles.includes(Role.STAFF) ? [Role.STUDENT] : [];
+}
+
+export function assertCanRegister(
+  actor: AuthenticatedUser,
+  institutionId: string,
+  role: Role,
+): void {
+  if (!registrableRoles(actor, institutionId).includes(role)) {
     throw new MemberRoleNotAllowedException();
   }
 }

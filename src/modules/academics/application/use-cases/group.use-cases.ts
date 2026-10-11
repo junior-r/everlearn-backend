@@ -1,6 +1,7 @@
 import { Role } from '../../../../shared/domain/auth/role.js';
 import {
   assertValidPeriodDates,
+  CourseHasScheduleException,
   GroupFullException,
   GroupNotFoundException,
   isFull,
@@ -122,7 +123,15 @@ export class AssignCourseTeacherUseCase {
     subjectId: string,
     teacherMembershipId: string | null,
   ): Promise<Group> {
-    await requireGroup(this.groups, institutionId, groupId);
+    const group = await requireGroup(this.groups, institutionId, groupId);
+    const current = group.courses.find((course) => course.subjectId === subjectId)?.teacher;
+    // The timetable was validated against the current teacher's availability and other classes
+    if (
+      (current?.membershipId ?? null) !== teacherMembershipId &&
+      (await this.groups.courseHasSchedule(groupId, subjectId))
+    ) {
+      throw new CourseHasScheduleException();
+    }
     if (teacherMembershipId !== null) {
       const member = await this.members.findActiveMember(institutionId, teacherMembershipId);
       if (member?.role !== Role.TEACHER) {

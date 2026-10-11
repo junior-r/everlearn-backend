@@ -2,6 +2,7 @@ export const Role = {
   ADMIN: 'ADMIN',
   COORDINATOR: 'COORDINATOR',
   TEACHER: 'TEACHER',
+  STAFF: 'STAFF',
   STUDENT: 'STUDENT',
   GUARDIAN: 'GUARDIAN',
 } as const;

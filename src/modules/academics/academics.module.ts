@@ -72,5 +72,7 @@ import { SubjectsController } from './presentation/controllers/subjects.controll
     useCaseProvider(EnrollStudentUseCase, [GROUP_REPOSITORY, MEMBER_DIRECTORY]),
     useCaseProvider(UnenrollStudentUseCase, [GROUP_REPOSITORY]),
   ],
+  // Scheduling reuses the same view of periods and active members
+  exports: [PERIOD_REPOSITORY, MEMBER_DIRECTORY],
 })
 export class AcademicsModule {}

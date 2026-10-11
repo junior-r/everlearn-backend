@@ -27,6 +27,11 @@ import {
   ONBOARDING_REPOSITORY,
 } from '../../src/modules/onboarding/domain/ports/onboarding.ports.js';
 import type { Role } from '../../src/shared/domain/auth/role.js';
+import {
+  AVAILABILITY_REPOSITORY,
+  SCHEDULE_LOCK,
+  SCHEDULE_REPOSITORY,
+} from '../../src/modules/scheduling/domain/ports/scheduling.ports.js';
 import { RATE_LIMITER } from '../../src/shared/domain/rate-limit/rate-limiter.js';
 import { PrismaService } from '../../src/shared/infrastructure/prisma/prisma.service.js';
 import { REDIS_CLIENT } from '../../src/shared/infrastructure/redis/redis.tokens.js';
@@ -48,6 +53,11 @@ import {
   type StoredMember,
 } from './identity.fakes.js';
 import { createOnboardingFakes } from './onboarding.fakes.js';
+import {
+  InMemoryAvailabilityRepository,
+  InMemoryScheduleLock,
+  InMemoryScheduleRepository,
+} from './scheduling.fakes.js';
 
 export const TEST_FRONTEND_URL = 'http://frontend.test';
 export const TEST_RATE_LIMIT = 5;
@@ -95,11 +105,16 @@ export async function createTestApp(extraControllers: Type[] = []) {
   directory.resolve = (membershipId) =>
     toEntry(members.members.find((member) => member.membershipId === membershipId));
 
+  const groups = new InMemoryGroupRepository(admin.pensums, periods, directory);
+
   const fakes = {
     users,
     members,
     periods,
-    groups: new InMemoryGroupRepository(admin.pensums, periods, directory),
+    groups,
+    availability: new InMemoryAvailabilityRepository(),
+    schedule: new InMemoryScheduleRepository(groups, directory),
+    scheduleLock: new InMemoryScheduleLock(),
     google: new FakeGoogleGateway(),
     revocations: new InMemoryRefreshTokenRevocations(),
     rateLimiter: new InMemoryRateLimiter(),
@@ -154,6 +169,12 @@ export async function createTestApp(extraControllers: Type[] = []) {
     .useValue(fakes.groups)
     .overrideProvider(MEMBER_DIRECTORY)
     .useValue(directory)
+    .overrideProvider(AVAILABILITY_REPOSITORY)
+    .useValue(fakes.availability)
+    .overrideProvider(SCHEDULE_REPOSITORY)
+    .useValue(fakes.schedule)
+    .overrideProvider(SCHEDULE_LOCK)
+    .useValue(fakes.scheduleLock)
     .compile();
 
   const app: INestApplication<App> = moduleRef.createNestApplication();

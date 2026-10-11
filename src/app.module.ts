@@ -5,6 +5,7 @@ import { AcademicsModule } from './modules/academics/academics.module.js';
 import { IdentityModule } from './modules/identity/identity.module.js';
 import { InstitutionsModule } from './modules/institutions/institutions.module.js';
 import { OnboardingModule } from './modules/onboarding/onboarding.module.js';
+import { SchedulingModule } from './modules/scheduling/scheduling.module.js';
 import { PrismaModule } from './shared/infrastructure/prisma/prisma.module.js';
 import { RedisModule } from './shared/infrastructure/redis/redis.module.js';
 import { HealthController } from './shared/presentation/controllers/health.controller.js';
@@ -18,6 +19,7 @@ import { DomainExceptionFilter } from './shared/presentation/filters/domain-exce
     IdentityModule,
     InstitutionsModule,
     AcademicsModule,
+    SchedulingModule,
     OnboardingModule,
   ],
   controllers: [HealthController],

@@ -105,6 +105,8 @@ interface StoredGroup extends GroupData {
 
 export class InMemoryGroupRepository implements GroupRepository {
   readonly rows: StoredGroup[] = [];
+  /** "groupId:subjectId" pairs that have classes scheduled. */
+  readonly scheduled = new Set<string>();
   /** Group ids that already have grades or attendance, which the database would refuse to delete. */
   readonly withRecords = new Set<string>();
 
@@ -218,6 +220,15 @@ export class InMemoryGroupRepository implements GroupRepository {
       row.teachers.delete(subjectId);
     }
     return Promise.resolve(true);
+  }
+
+  courseHasSchedule(groupId: string, subjectId: string): Promise<boolean> {
+    return Promise.resolve(this.scheduled.has(groupId + ':' + subjectId));
+  }
+
+  /** The teacher assigned to a subject of a group, as the Course row would record it. */
+  teacherOf(groupId: string, subjectId: string): string | null {
+    return this.rows.find((row) => row.id === groupId)?.teachers.get(subjectId) ?? null;
   }
 
   enroll(groupId: string, studentMembershipId: string): Promise<void> {

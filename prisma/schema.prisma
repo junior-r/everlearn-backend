@@ -11,8 +11,11 @@ datasource db {
 
 enum Role {
   ADMIN
+  // Principals and other directors (Directivos)
   COORDINATOR
   TEACHER
+  // Administrative personnel
+  STAFF
   STUDENT
   GUARDIAN
 }

@@ -223,6 +223,16 @@ export class PrismaGroupRepository implements GroupRepository {
     });
   }
 
+  courseHasSchedule(groupId: string, subjectId: string): Promise<boolean> {
+    return runQuery(
+      this.logger,
+      async () =>
+        (await this.prisma.scheduleSlot.count({
+          where: { course: { groupId, pensumSubject: { subjectId } } },
+        })) > 0,
+    );
+  }
+
   enroll(groupId: string, studentMembershipId: string): Promise<void> {
     return runQuery(
       this.logger,

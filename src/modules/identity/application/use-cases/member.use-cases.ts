@@ -43,7 +43,7 @@ export class RegisterMemberUseCase {
    * of being duplicated or refused.
    */
   async execute(input: RegisterMemberInput): Promise<RegisteredMember> {
-    assertCanRegister(input.actor, input.role);
+    assertCanRegister(input.actor, input.institutionId, input.role);
     const email = normalizeEmail(input.email);
     const existing = await this.users.findByEmail(email);
     return existing ? this.addToExisting(existing, input) : this.createAccount(email, input);

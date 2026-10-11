@@ -37,6 +37,8 @@ export interface GroupRepository {
    * place that subject at the group's level.
    */
   assignTeacher(groupId: string, subjectId: string, teacherMembershipId: string | null): Promise<boolean>;
+  /** Whether the group has classes scheduled for this subject. */
+  courseHasSchedule(groupId: string, subjectId: string): Promise<boolean>;
   enroll(groupId: string, studentMembershipId: string): Promise<void>;
   unenroll(groupId: string, studentMembershipId: string): Promise<boolean>;
 }

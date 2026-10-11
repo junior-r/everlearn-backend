@@ -136,3 +136,13 @@ export class StudentAlreadyEnrolledException extends DomainException {
     super('CONFLICT', 'STUDENT_ALREADY_ENROLLED', 'The student is already in this group');
   }
 }
+
+export class CourseHasScheduleException extends DomainException {
+  constructor() {
+    super(
+      'CONFLICT',
+      'COURSE_HAS_SCHEDULE',
+      'Remove the classes scheduled for this subject before changing its teacher',
+    );
+  }
+}
