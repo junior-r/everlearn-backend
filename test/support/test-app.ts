@@ -1,3 +1,4 @@
+import type { Server } from 'node:http';
 import type { INestApplication, Type } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import cookieParser from 'cookie-parser';
@@ -5,7 +6,11 @@ import request from 'supertest';
 import type { App } from 'supertest/types.js';
 import { AppModule } from '../../src/app.module.js';
 import { APP_CONFIG, loadAppConfig } from '../../src/config/app-config.js';
-import { LLM_PROVIDER, TEACHING_RECORDS } from '../../src/modules/ai/domain/ports/assistant.ports.js';
+import {
+  LLM_PROVIDER,
+  TEACHING_RECORDS,
+  type LLMProvider,
+} from '../../src/modules/ai/domain/ports/assistant.ports.js';
 import { MockLLMProvider } from '../../src/modules/ai/infrastructure/mock-llm.provider.js';
 import {
   PENSUM_REPOSITORY,
@@ -78,7 +83,12 @@ export const TEST_INTERNAL_SECRET = 'internal-secret-for-tests';
  * Boots the real AppModule (guards, pipes, filters, controllers, use cases)
  * with every outbound adapter replaced by an in-memory fake.
  */
-export async function createTestApp(extraControllers: Type[] = []) {
+export interface TestAppOptions {
+  /** The model behind the assistant; the built-in mock, without its typing pauses, by default. */
+  llm?: LLMProvider;
+}
+
+export async function createTestApp(extraControllers: Type[] = [], options: TestAppOptions = {}) {
   const users = new InMemoryUserRepository();
   const members = new InMemoryMemberRepository(users);
   const onboarding = createOnboardingFakes();
@@ -202,9 +212,8 @@ export async function createTestApp(extraControllers: Type[] = []) {
     .useValue(fakes.evaluations)
     .overrideProvider(TEACHING_RECORDS)
     .useValue(fakes.teaching)
-    // The built-in model, without the pauses that make it look like it is typing
     .overrideProvider(LLM_PROVIDER)
-    .useValue(new MockLLMProvider(0))
+    .useValue(options.llm ?? new MockLLMProvider(0))
     .compile();
 
   const app: INestApplication<App> = moduleRef.createNestApplication();
@@ -212,6 +221,8 @@ export async function createTestApp(extraControllers: Type[] = []) {
   // Listen once on a free port, so supertest does not start and stop the server around every request
   await app.listen(0);
   const server = app.getHttpServer();
+  /** The same server as Node sees it, for what supertest's type does not offer. */
+  const httpServer = app.getHttpServer() as unknown as Server;
 
   /** Signs in through the real endpoint and returns the access token. */
   async function tokenFor(email: string, password = TEST_PASSWORD): Promise<string> {
@@ -251,9 +262,20 @@ export async function createTestApp(extraControllers: Type[] = []) {
     return { user, token: await tokenFor(user.email) };
   }
 
+  /**
+   * Stops the app. Connections still open (a keep-alive socket, an answer
+   * still streaming) are dropped first, so closing never waits on them.
+   */
+  async function close(): Promise<void> {
+    httpServer.closeAllConnections();
+    await app.close();
+  }
+
   return {
     app,
     server,
+    httpServer,
+    close,
     tokenFor,
     tokenAfterPasswordChange,
     signInAs,

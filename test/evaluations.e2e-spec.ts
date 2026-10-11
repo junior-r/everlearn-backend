@@ -76,7 +76,7 @@ describe('Evaluations and grades (HTTP)', () => {
   });
 
   afterEach(async () => {
-    await ctx.app.close();
+    await ctx.close();
   });
 
   it('takes an evaluation from draft to graded, and shows it to the Teacher and the Student', async () => {

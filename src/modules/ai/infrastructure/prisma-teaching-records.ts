@@ -2,7 +2,12 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { DayOfWeek } from '../../../shared/infrastructure/prisma/generated/client.js';
 import { runQuery } from '../../../shared/infrastructure/prisma/prisma-errors.js';
 import { PrismaService } from '../../../shared/infrastructure/prisma/prisma.service.js';
-import type { SubjectSummary, TeachingRecords } from '../domain/ports/assistant.ports.js';
+import type {
+  GroupAttendance,
+  SubjectSummary,
+  TeacherCourse,
+  TeachingRecords,
+} from '../domain/ports/assistant.ports.js';
 import type { TaughtCourse, TimeRange } from '../domain/teacher-hours.js';
 
 /** Our days as `Date.getUTCDay` numbers them. */
@@ -28,6 +33,78 @@ export class PrismaTeachingRecords implements TeachingRecords {
     return runQuery(this.logger, () =>
       this.prisma.subject.findMany({ where: { institutionId }, select: subjectSelect, orderBy: { name: 'asc' } }),
     );
+  }
+
+  coursesTaughtBy(institutionId: string, teacherMembershipIds: string[]): Promise<TeacherCourse[]> {
+    return runQuery(this.logger, async () => {
+      const rows = await this.prisma.course.findMany({
+        where: { teacherId: { in: teacherMembershipIds }, group: { institutionId } },
+        select: {
+          id: true,
+          teacherId: true,
+          group: { select: { id: true, name: true } },
+          pensumSubject: { select: { subject: { select: subjectSelect } } },
+        },
+        orderBy: [{ group: { name: 'asc' } }, { pensumSubject: { subject: { name: 'asc' } } }],
+      });
+      return rows.flatMap((row) =>
+        row.teacherId
+          ? [
+              {
+                courseId: row.id,
+                groupId: row.group.id,
+                groupName: row.group.name,
+                subject: row.pensumSubject.subject,
+                teacherMembershipId: row.teacherId,
+              },
+            ]
+          : [],
+      );
+    });
+  }
+
+  attendanceIn(
+    institutionId: string,
+    groupId: string,
+    teacherMembershipIds: string[],
+  ): Promise<GroupAttendance | null> {
+    // Only the classes of the courses these memberships teach in the group
+    const ownClasses = { course: { groupId, teacherId: { in: teacherMembershipIds } } };
+    return runQuery(this.logger, async () => {
+      const group = await this.prisma.group.findFirst({
+        where: { id: groupId, institutionId, courses: { some: { teacherId: { in: teacherMembershipIds } } } },
+        select: { name: true },
+      });
+      if (!group) {
+        return null;
+      }
+      const [classesHeld, enrollments] = await Promise.all([
+        this.prisma.classSession.count({ where: { ...ownClasses, status: 'COMPLETED' } }),
+        this.prisma.enrollment.findMany({
+          where: { groupId, status: 'ACTIVE' },
+          select: {
+            student: { select: { user: { select: { firstName: true, lastName: true } } } },
+            attendance: { where: { session: ownClasses }, select: { status: true } },
+          },
+          orderBy: [{ student: { user: { lastName: 'asc' } } }, { student: { user: { firstName: 'asc' } } }],
+        }),
+      ]);
+      return {
+        groupName: group.name,
+        classesHeld,
+        students: enrollments.map(({ student, attendance }) => {
+          const marked = (status: string) => attendance.filter((record) => record.status === status).length;
+          return {
+            firstName: student.user.firstName,
+            lastName: student.user.lastName,
+            present: marked('PRESENT'),
+            late: marked('LATE'),
+            absent: marked('ABSENT'),
+            excused: marked('EXCUSED'),
+          };
+        }),
+      };
+    });
   }
 
   findTeaching(

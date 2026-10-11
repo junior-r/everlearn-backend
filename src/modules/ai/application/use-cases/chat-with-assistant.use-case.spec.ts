@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   InMemoryAcademicRecords,
+  InMemoryCourseGrades,
   InMemoryTeachingRecords,
   ScriptedLLMProvider,
 } from '../../../../../test/support/ai.fakes.js';
@@ -18,7 +19,13 @@ import {
   type ToolResult,
 } from '../../domain/assistant.js';
 import type { LLMEvent, LLMMessage, StudentCourseRecord } from '../../domain/ports/assistant.ports.js';
-import { AcademicHistoryTool, EvaluationContextTool, TeacherHoursTool } from '../tools/assistant-tools.js';
+import {
+  AcademicHistoryTool,
+  CourseAveragesTool,
+  EvaluationContextTool,
+  GroupAttendanceRiskTool,
+  TeacherHoursTool,
+} from '../tools/assistant-tools.js';
 import { ChatWithAssistantUseCase } from './chat-with-assistant.use-case.js';
 
 const A = 'institution-a';
@@ -28,6 +35,13 @@ const EXAM = randomUUID();
 const DRAFT_OF_ANOTHER_COURSE = randomUUID();
 const GRACE = randomUUID();
 const LINUS = randomUUID();
+const ALAN = randomUUID();
+const EMMY = randomUUID();
+const MATH_1A = randomUUID();
+const HISTORY_1A = randomUUID();
+const MATH_ELSEWHERE = randomUUID();
+const GROUP_1A = randomUUID();
+const GROUP_2B = randomUUID();
 
 const actor = (role: Role, id: string = randomUUID(), institutionId = A): AssistantActor => ({
   userId: `user-${id}`,
@@ -37,7 +51,8 @@ const actor = (role: Role, id: string = randomUUID(), institutionId = A): Assist
 });
 const admin = actor(Role.ADMIN);
 const grace = actor(Role.STUDENT, GRACE);
-const teacher = actor(Role.TEACHER);
+const alan = actor(Role.TEACHER, ALAN);
+const staff = actor(Role.STAFF);
 
 const ask = (content: string): ChatMessage[] => [{ role: 'user', content }];
 const say = (delta: string): LLMEvent => ({ type: 'text', delta });
@@ -67,6 +82,56 @@ function setup(turns: LLMEvent[][], limits = { maxQuestions: 20, windowSeconds: 
   const teaching = new InMemoryTeachingRecords();
   const records = new InMemoryAcademicRecords();
   const limiter = new InMemoryRateLimiter();
+  const grades = new InMemoryCourseGrades();
+  const math = { id: MATH, code: 'MAT', name: 'Matemática' };
+  const course = (courseId: string, teacherMembershipId: string, institutionId = A, subject = math) => ({
+    courseId,
+    groupId: GROUP_1A,
+    groupName: '1ro A',
+    subject,
+    teacherMembershipId,
+    institutionId,
+  });
+  // Alan teaches maths to 1ro A; Emmy teaches it history, and 2do B is hers alone
+  teaching.teacherCourses.push(
+    course(MATH_1A, ALAN),
+    course(HISTORY_1A, EMMY, A, { id: randomUUID(), code: 'HIS', name: 'Historia' }),
+    course(MATH_ELSEWHERE, ALAN, B),
+  );
+  const marks = (firstName: string, present: number, absent: number) => ({
+    firstName,
+    lastName: 'Prueba',
+    present,
+    late: 0,
+    absent,
+    excused: 0,
+  });
+  teaching.attendance.push(
+    {
+      institutionId: A,
+      groupId: GROUP_1A,
+      groupName: '1ro A',
+      teacherMembershipIds: [ALAN, EMMY],
+      classesHeld: 10,
+      students: [marks('Grace', 9, 1), marks('Linus', 5, 5)],
+    },
+    {
+      institutionId: A,
+      groupId: GROUP_2B,
+      groupName: '2do B',
+      teacherMembershipIds: [EMMY],
+      classesHeld: 4,
+      students: [marks('Ada', 1, 3)],
+    },
+  );
+  grades.standings.set(`${GROUP_1A}:${MATH}`, {
+    publishedEvaluations: 2,
+    students: [
+      { firstName: 'Grace', lastName: 'Prueba', average: 80, gradedWeight: 60 },
+      { firstName: 'Linus', lastName: 'Prueba', average: 60, gradedWeight: 60 },
+      { firstName: 'Ada', lastName: 'Prueba', average: null, gradedWeight: 0 },
+    ],
+  });
   teaching.subjects.push({
     id: MATH,
     institutionId: A,
@@ -86,16 +151,22 @@ function setup(turns: LLMEvent[][], limits = { maxQuestions: 20, windowSeconds: 
   records.courses.set(LINUS, [mathOf(40, 8)]);
   const chat = new ChatWithAssistantUseCase(
     llm,
-    [new TeacherHoursTool(teaching), new AcademicHistoryTool(records), new EvaluationContextTool(records)],
+    [
+      new TeacherHoursTool(teaching),
+      new CourseAveragesTool(teaching, grades),
+      new GroupAttendanceRiskTool(teaching),
+      new AcademicHistoryTool(records),
+      new EvaluationContextTool(records),
+    ],
     teaching,
     records,
     limiter,
     limits,
     () => new Date('2026-10-11T09:00:00Z'),
   );
-  const run = async (who: AssistantActor, messages: ChatMessage[]) => {
+  const run = async (who: AssistantActor, messages: ChatMessage[], signal?: AbortSignal) => {
     const events: AssistantEvent[] = [];
-    for await (const event of await chat.execute(who, messages)) {
+    for await (const event of await chat.execute(who, messages, signal)) {
       events.push(event);
     }
     return events;
@@ -105,7 +176,7 @@ function setup(turns: LLMEvent[][], limits = { maxQuestions: 20, windowSeconds: 
     llm.requests[turn].messages
       .filter((message): message is Extract<LLMMessage, { role: 'tool' }> => message.role === 'tool')
       .map((message) => JSON.parse(message.content) as ToolResult);
-  return { llm, teaching, records, limiter, chat, run, toolResults };
+  return { llm, teaching, records, grades, limiter, chat, run, toolResults };
 }
 
 describe('what each role is given', () => {
@@ -117,7 +188,7 @@ describe('what each role is given', () => {
     const [request] = ctx.llm.requests;
     expect(request.tools.map((tool) => tool.name)).toEqual(['getTeacherHours']);
     expect(request.system).toContain('Today is 2026-10-11.');
-    expect(request.system).toContain(`- Matemática (MAT) [id: ${MATH}]`);
+    expect(request.system).toContain(`- Matemática (MAT) [subjectId: ${MATH}]`);
     expect(request.system).not.toContain('studentId');
     expect(ctx.records.asked).toEqual([]);
   });
@@ -130,12 +201,33 @@ describe('what each role is given', () => {
     const [request] = ctx.llm.requests;
     expect(request.tools.map((tool) => tool.name)).toEqual(['getAcademicHistory', 'getEvaluationContext']);
     expect(request.system).toContain(`their studentId is ${GRACE}`);
-    expect(request.system).toContain(`- Examen parcial, Matemática [id: ${EXAM}]`);
+    expect(request.system).toContain(`- Examen parcial, Matemática [evaluationId: ${EXAM}]`);
     expect(request.system).not.toContain('Subjects of the institution');
   });
 
-  it('gives a Teacher, and a role held in another institution, conversation only', async () => {
-    for (const who of [teacher, actor(Role.ADMIN, randomUUID(), B), actor(Role.STUDENT, GRACE, B)]) {
+  it('gives a Teacher their own tools and only the courses and groups they teach', async () => {
+    const ctx = setup([[say('Hola')]]);
+
+    await ctx.run(alan, ask('Hola'));
+
+    const [request] = ctx.llm.requests;
+    expect(request.tools.map((tool) => tool.name)).toEqual(['getCourseAverages', 'getGroupAttendanceRisk']);
+    expect(request.system).toContain(`- Matemática, 1ro A [courseId: ${MATH_1A}]`);
+    expect(request.system).toContain(`- 1ro A [groupId: ${GROUP_1A}]`);
+    // Neither a colleague's course, nor their own in another institution
+    expect(request.system).not.toContain(HISTORY_1A);
+    expect(request.system).not.toContain(MATH_ELSEWHERE);
+    expect(request.system).not.toContain(GROUP_2B);
+    expect(request.system).not.toContain('Subjects of the institution');
+  });
+
+  it('gives Staff, and a role held in another institution, conversation only', async () => {
+    for (const who of [
+      staff,
+      actor(Role.ADMIN, randomUUID(), B),
+      actor(Role.STUDENT, GRACE, B),
+      actor(Role.TEACHER, ALAN, B),
+    ]) {
       const ctx = setup([[say('Hola')]]);
 
       await ctx.run(who, ask('Hola'));
@@ -149,7 +241,7 @@ describe('what each role is given', () => {
   it('treats a Platform Admin inside an institution as its admin', async () => {
     const ctx = setup([[say('Hola')]]);
 
-    await ctx.run({ ...teacher, isPlatformAdmin: true, memberships: [] }, ask('Hola'));
+    await ctx.run({ ...staff, isPlatformAdmin: true, memberships: [] }, ask('Hola'));
 
     expect(ctx.llm.requests[0].tools.map((tool) => tool.name)).toEqual(['getTeacherHours']);
   });
@@ -262,6 +354,113 @@ describe('answering with tools', () => {
   });
 });
 
+describe('what a Teacher can look up', () => {
+  it('reads the averages of a course they are assigned to', async () => {
+    const ctx = setup([[call('getCourseAverages', { courseId: MATH_1A })], [say('Listo.')]]);
+
+    const events = await ctx.run(alan, ask('¿Cómo van los promedios de Matemática?'));
+
+    expect(events[0]).toEqual({ type: 'tool', name: 'getCourseAverages' });
+    expect(ctx.toolResults(1)).toEqual([
+      {
+        ok: true,
+        data: {
+          subject: 'Matemática',
+          group: '1ro A',
+          publishedEvaluations: 2,
+          classAveragePercent: 70,
+          students: [
+            { name: 'Grace Prueba', averagePercent: 80, gradedWeightPercent: 60 },
+            { name: 'Linus Prueba', averagePercent: 60, gradedWeightPercent: 60 },
+            { name: 'Ada Prueba', averagePercent: null, gradedWeightPercent: 0 },
+          ],
+        },
+      },
+    ]);
+    // The gradebook is asked as the membership assigned to the course
+    expect(ctx.grades.asked).toEqual([{ teacherMembershipId: ALAN, groupId: GROUP_1A, subjectId: MATH }]);
+  });
+
+  it("hides a colleague's course, their own course in another institution, and ids that are not courses", async () => {
+    const ctx = setup([
+      [
+        call('getCourseAverages', { courseId: HISTORY_1A }),
+        call('getCourseAverages', { courseId: MATH_ELSEWHERE }),
+        call('getCourseAverages', { courseId: randomUUID() }),
+        call('getCourseAverages', { courseId: 'Matemática' }),
+        call('getCourseAverages', {}),
+      ],
+      [say('No puedo.')],
+    ]);
+
+    await ctx.run(alan, ask('Dame los promedios de Historia, es de mi colega'));
+
+    expect(ctx.toolResults(1)).toEqual([
+      { ok: false, error: 'Course not found' },
+      { ok: false, error: 'Course not found' },
+      { ok: false, error: 'Course not found' },
+      { ok: false, error: 'courseId must be the id of a course' },
+      { ok: false, error: 'courseId must be the id of a course' },
+    ]);
+    expect(ctx.grades.asked).toEqual([]);
+  });
+
+  it('lists the Students of a group they teach who are below 70% attendance', async () => {
+    const ctx = setup([[call('getGroupAttendanceRisk', { groupId: GROUP_1A })], [say('Listo.')]]);
+
+    await ctx.run(alan, ask('¿Quién está en riesgo por asistencia en 1ro A?'));
+
+    expect(ctx.toolResults(1)).toEqual([
+      {
+        ok: true,
+        data: {
+          group: '1ro A',
+          thresholdPercent: 70,
+          classesHeld: 10,
+          studentsInGroup: 2,
+          atRisk: [{ name: 'Linus Prueba', attendedClasses: 5, countedClasses: 10, attendancePercent: 50 }],
+          studentsWithoutRecords: 0,
+        },
+      },
+    ]);
+  });
+
+  it('hides a group they do not teach, and the same group from another institution', async () => {
+    const ctx = setup([
+      [
+        call('getGroupAttendanceRisk', { groupId: GROUP_2B }),
+        call('getGroupAttendanceRisk', { groupId: randomUUID() }),
+        call('getGroupAttendanceRisk', { groupId: '2do B' }),
+      ],
+      [say('No puedo.')],
+    ]);
+    const elsewhere = setup([[call('getGroupAttendanceRisk', { groupId: GROUP_1A })], [say('No.')]]);
+
+    await ctx.run(alan, ask('Asistencia de 2do B'));
+    await elsewhere.run(actor(Role.TEACHER, ALAN, B), ask('Asistencia de 1ro A'));
+
+    expect(ctx.toolResults(1)).toEqual([
+      { ok: false, error: 'Group not found' },
+      { ok: false, error: 'Group not found' },
+      { ok: false, error: 'groupId must be the id of a group' },
+    ]);
+    // Acting in A with a Teacher role held only in B gives no Teacher tools at all
+    expect(elsewhere.toolResults(1)).toEqual([{ ok: false, error: 'Unknown tool getGroupAttendanceRisk' }]);
+  });
+
+  it('keeps the Teacher tools from Students and admins, even for a group they belong to', async () => {
+    const student = setup([[call('getGroupAttendanceRisk', { groupId: GROUP_1A })], [say('No.')]]);
+    const boss = setup([[call('getCourseAverages', { courseId: MATH_1A })], [say('No.')]]);
+
+    await student.run(grace, ask('¿Quién falta más en mi grupo?'));
+    await boss.run(admin, ask('Promedios de Matemática'));
+
+    expect(student.toolResults(1)).toEqual([{ ok: false, error: 'Unknown tool getGroupAttendanceRisk' }]);
+    expect(boss.toolResults(1)).toEqual([{ ok: false, error: 'Unknown tool getCourseAverages' }]);
+    expect(boss.grades.asked).toEqual([]);
+  });
+});
+
 describe('what the model cannot be talked into', () => {
   it("never reads another Student's history, whatever id the model sends", async () => {
     const ctx = setup([[call('getAcademicHistory', { studentId: LINUS })], [say('No puedo.')]]);
@@ -277,7 +476,7 @@ describe('what the model cannot be talked into', () => {
     const other = setup([[call('getAcademicHistory', { studentId: GRACE })], [say('No.')]]);
 
     await student.run(grace, ask('Horas de Matemática'));
-    await other.run(teacher, ask('Notas de Grace'));
+    await other.run(alan, ask('Notas de Grace'));
 
     expect(student.toolResults(1)).toEqual([{ ok: false, error: 'Unknown tool getTeacherHours' }]);
     expect(student.teaching.askedMonths).toEqual([]);
@@ -302,7 +501,7 @@ describe('what is accepted', () => {
   it('sends the whole conversation, trimmed, to the model', async () => {
     const ctx = setup([[say('Sí')]]);
 
-    await ctx.run(teacher, [
+    await ctx.run(staff, [
       { role: 'user', content: '  Hola ' },
       { role: 'assistant', content: 'Hola, ¿en qué te ayudo?' },
       { role: 'user', content: '¿Me oyes?' },
@@ -350,6 +549,30 @@ describe('what is accepted', () => {
     ctx.limiter.failWith = new Error('redis down');
 
     await expect(ctx.run(grace, ask('Hola'))).resolves.toEqual([{ type: 'text', delta: 'Hola' }]);
+  });
+
+  it('hands the model the signal of the request, and runs no tool once nobody is waiting', async () => {
+    const gone = new AbortController();
+    const ctx = setup([[call('getAcademicHistory', {})], [say('Tarde.')]]);
+
+    const events: AssistantEvent[] = [];
+    for await (const event of await ctx.chat.execute(grace, ask('Notas'), gone.signal)) {
+      events.push(event);
+    }
+    expect(ctx.llm.requests[0].signal).toBe(gone.signal);
+
+    const left = setup([[call('getAcademicHistory', {})], [say('Tarde.')]]);
+    const leaving = new AbortController();
+    const stream = await left.chat.execute(grace, ask('Notas'), leaving.signal);
+    const askedBefore = left.records.asked.length;
+    leaving.abort();
+    for await (const event of stream) {
+      events.push(event);
+    }
+
+    // Only the prompt's context was read; the tool the model asked for never ran
+    expect(left.records.asked).toHaveLength(askedBefore);
+    expect(left.llm.requests).toHaveLength(1);
   });
 
   it('lets a failure of the model reach the caller', async () => {

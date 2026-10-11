@@ -6,8 +6,10 @@ import {
   type ToolDefinition,
   type ToolResult,
 } from '../../domain/assistant.js';
+import { attendanceRisk, ATTENDANCE_RISK_BELOW, classAverage } from '../../domain/class-standing.js';
 import type {
   AcademicRecords,
+  CourseGrades,
   StudentCourseRecord,
   StudentEvaluation,
   TeachingRecords,
@@ -160,5 +162,102 @@ export class EvaluationContextTool implements AssistantTool {
     }
     // Drafts and other Students' courses look the same as an id that does not exist
     return refuse('Evaluation not found');
+  }
+}
+
+export class CourseAveragesTool implements AssistantTool {
+  readonly audience = Audience.TEACHER;
+  readonly definition: ToolDefinition = {
+    name: 'getCourseAverages',
+    description:
+      "Where the Students of one of the current Teacher's courses stand: each Student's average as a percentage, how much of the course is graded, and the class average. Only courses the Teacher is assigned to can be read.",
+    parameters: {
+      type: 'object',
+      properties: {
+        courseId: { type: 'string', format: 'uuid', description: 'Id of the course, from the context' },
+      },
+      required: ['courseId'],
+      additionalProperties: false,
+    },
+  };
+
+  constructor(
+    private readonly teaching: TeachingRecords,
+    private readonly grades: CourseGrades,
+  ) {}
+
+  async run(actor: AssistantActor, input: unknown): Promise<ToolResult> {
+    const courseId = textField(input, 'courseId');
+    if (!courseId || !UUID.test(courseId)) {
+      return refuse('courseId must be the id of a course');
+    }
+    // The course must be among those assigned to the Teacher; any other id looks like one that does not exist
+    const own = await this.teaching.coursesTaughtBy(actor.institutionId, membershipIdsOf(actor, Role.TEACHER));
+    const course = own.find((candidate) => candidate.courseId === courseId);
+    if (!course) {
+      return refuse('Course not found');
+    }
+    const standing = await this.grades.standingOf(actor.institutionId, course.teacherMembershipId, {
+      groupId: course.groupId,
+      subjectId: course.subject.id,
+    });
+    return {
+      ok: true,
+      data: {
+        subject: course.subject.name,
+        group: course.groupName,
+        publishedEvaluations: standing.publishedEvaluations,
+        classAveragePercent: classAverage(standing.students.map((student) => student.average)),
+        students: standing.students.map((student) => ({
+          name: `${student.firstName} ${student.lastName}`,
+          averagePercent: student.average,
+          gradedWeightPercent: student.gradedWeight,
+        })),
+      },
+    };
+  }
+}
+
+export class GroupAttendanceRiskTool implements AssistantTool {
+  readonly audience = Audience.TEACHER;
+  readonly definition: ToolDefinition = {
+    name: 'getGroupAttendanceRisk',
+    description:
+      "The Students of one of the current Teacher's groups who attended less than 70% of the classes of the Teacher's own courses there. Arriving late counts as attending; excused absences are left out. Only groups the Teacher teaches can be read.",
+    parameters: {
+      type: 'object',
+      properties: {
+        groupId: { type: 'string', format: 'uuid', description: 'Id of the group, from the context' },
+      },
+      required: ['groupId'],
+      additionalProperties: false,
+    },
+  };
+
+  constructor(private readonly teaching: TeachingRecords) {}
+
+  async run(actor: AssistantActor, input: unknown): Promise<ToolResult> {
+    const groupId = textField(input, 'groupId');
+    if (!groupId || !UUID.test(groupId)) {
+      return refuse('groupId must be the id of a group');
+    }
+    const attendance = await this.teaching.attendanceIn(
+      actor.institutionId,
+      groupId,
+      membershipIdsOf(actor, Role.TEACHER),
+    );
+    if (!attendance) {
+      return refuse('Group not found');
+    }
+    return {
+      ok: true,
+      data: {
+        group: attendance.groupName,
+        thresholdPercent: ATTENDANCE_RISK_BELOW * 100,
+        classesHeld: attendance.classesHeld,
+        studentsInGroup: attendance.students.length,
+        ...attendanceRisk(attendance.students),
+      },
+    };
   }
 }

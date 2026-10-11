@@ -48,7 +48,7 @@ describe('Institution hierarchy and admin pipeline (HTTP)', () => {
   });
 
   afterEach(async () => {
-    await ctx.app.close();
+    await ctx.close();
   });
 
   describe('institutions', () => {

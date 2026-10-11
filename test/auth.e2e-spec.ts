@@ -42,7 +42,7 @@ describe('Auth HTTP flow', () => {
   });
 
   afterEach(async () => {
-    await ctx.app.close();
+    await ctx.close();
   });
 
   it('exposes the health check publicly', async () => {

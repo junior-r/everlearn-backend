@@ -23,7 +23,7 @@ export interface AssistantActor {
 }
 
 /** What the member is to the institution, as far as the assistant's data access goes. */
-export const Audience = { ADMIN: 'ADMIN', STUDENT: 'STUDENT' } as const;
+export const Audience = { ADMIN: 'ADMIN', TEACHER: 'TEACHER', STUDENT: 'STUDENT' } as const;
 export type Audience = (typeof Audience)[keyof typeof Audience];
 
 /** A tool as the model sees it. `parameters` is a JSON Schema, as MCP and the provider SDKs expect. */
@@ -58,6 +58,9 @@ export function audiencesOf(actor: AssistantActor): Set<Audience> {
   const audiences = new Set<Audience>();
   if (actor.isPlatformAdmin || membershipIdsOf(actor, Role.ADMIN).length > 0) {
     audiences.add(Audience.ADMIN);
+  }
+  if (membershipIdsOf(actor, Role.TEACHER).length > 0) {
+    audiences.add(Audience.TEACHER);
   }
   if (membershipIdsOf(actor, Role.STUDENT).length > 0) {
     audiences.add(Audience.STUDENT);

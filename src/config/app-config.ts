@@ -39,11 +39,16 @@ export interface AppConfig {
   ai: AiConfig;
 }
 
-/** The language models the assistant can run on. Only the built-in mock exists so far. */
-export const LLM_PROVIDERS = ['mock'] as const;
+export interface OpenAIConfig {
+  apiKey: string;
+  model: string;
+}
 
 export interface AiConfig {
-  provider: (typeof LLM_PROVIDERS)[number];
+  /** The real model behind the assistant. Null runs the built-in mock. */
+  openai: OpenAIConfig | null;
+  /** True when a real model was asked for but no key was given, so the mock runs instead. */
+  realAiWithoutKey: boolean;
   /** Questions one member may ask the assistant per window. */
   chatMaxQuestions: number;
   chatWindowSeconds: number;
@@ -132,12 +137,24 @@ function liveKitConfig(env: Env): LiveKitConfig | null {
   return { apiKey: env.LIVEKIT_API_KEY, apiSecret: secret(env, 'LIVEKIT_API_SECRET') };
 }
 
-function llmProvider(env: Env): AiConfig['provider'] {
-  const provider = LLM_PROVIDERS.find((name) => name === (env.LLM_PROVIDER || 'mock'));
-  if (!provider) {
-    throw new Error(`LLM_PROVIDER must be one of: ${LLM_PROVIDERS.join(', ')}`);
+function flag(env: Env, key: string): boolean {
+  const raw = (env[key] ?? '').trim().toLowerCase();
+  if (raw !== '' && raw !== 'true' && raw !== 'false') {
+    throw new Error(`${key} must be true or false`);
   }
-  return provider;
+  return raw === 'true';
+}
+
+/** The assistant runs on OpenAI only when it is switched on and has a key; otherwise on the mock. */
+function aiConfig(env: Env): AiConfig {
+  const useRealAi = flag(env, 'USE_REAL_AI');
+  const apiKey = env.OPENAI_API_KEY?.trim();
+  return {
+    openai: useRealAi && apiKey ? { apiKey, model: env.OPENAI_MODEL?.trim() || 'gpt-4o-mini' } : null,
+    realAiWithoutKey: useRealAi && !apiKey,
+    chatMaxQuestions: positiveInt(env, 'AI_CHAT_MAX_QUESTIONS', 20),
+    chatWindowSeconds: positiveInt(env, 'AI_CHAT_WINDOW_SECONDS', 60),
+  };
 }
 
 /**
@@ -169,10 +186,6 @@ export function loadAppConfig(env: Env): AppConfig {
       : null,
     livekit: liveKitConfig(env),
     internalServiceSecret: env.INTERNAL_SERVICE_SECRET || null,
-    ai: {
-      provider: llmProvider(env),
-      chatMaxQuestions: positiveInt(env, 'AI_CHAT_MAX_QUESTIONS', 20),
-      chatWindowSeconds: positiveInt(env, 'AI_CHAT_WINDOW_SECONDS', 60),
-    },
+    ai: aiConfig(env),
   };
 }

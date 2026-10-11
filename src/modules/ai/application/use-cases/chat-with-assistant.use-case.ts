@@ -61,13 +61,17 @@ export class ChatWithAssistantUseCase {
    * accepted; the answer then arrives as a stream. The member's role decides
    * which tools the model gets, and each tool reads only what that member may see.
    */
-  async execute(actor: AssistantActor, messages: ChatMessage[]): Promise<AsyncIterable<AssistantEvent>> {
+  async execute(
+    actor: AssistantActor,
+    messages: ChatMessage[],
+    signal?: AbortSignal,
+  ): Promise<AsyncIterable<AssistantEvent>> {
     const conversation = checked(messages);
     await this.countQuestion(actor);
     const audiences = audiencesOf(actor);
     const tools = this.tools.filter((tool) => audiences.has(tool.audience));
     const system = systemPrompt(await this.context(actor, audiences));
-    return this.answer(actor, system, conversation, tools);
+    return this.answer(actor, system, conversation, tools, signal);
   }
 
   private async countQuestion(actor: AssistantActor): Promise<void> {
@@ -83,13 +87,17 @@ export class ChatWithAssistantUseCase {
 
   private async context(actor: AssistantActor, audiences: Set<Audience>): Promise<PromptContext> {
     const studentIds = membershipIdsOf(actor, Role.STUDENT);
-    const [subjects, courses] = await Promise.all([
+    const [subjects, teacherCourses, courses] = await Promise.all([
       audiences.has(Audience.ADMIN) ? this.teaching.listSubjects(actor.institutionId) : undefined,
+      audiences.has(Audience.TEACHER)
+        ? this.teaching.coursesTaughtBy(actor.institutionId, membershipIdsOf(actor, Role.TEACHER))
+        : undefined,
       audiences.has(Audience.STUDENT) ? this.records.coursesOf(actor.institutionId, studentIds) : undefined,
     ]);
     return {
       today: this.now(),
       subjects,
+      teacherCourses,
       student: courses && { membershipIds: studentIds, courses },
     };
   }
@@ -99,6 +107,7 @@ export class ChatWithAssistantUseCase {
     system: string,
     conversation: ChatMessage[],
     tools: AssistantTool[],
+    signal?: AbortSignal,
   ): AsyncGenerator<AssistantEvent> {
     const messages: LLMMessage[] = [...conversation];
     for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
@@ -106,7 +115,7 @@ export class ChatWithAssistantUseCase {
       const offered = round < MAX_TOOL_ROUNDS ? tools.map((tool) => tool.definition) : [];
       const calls: ToolCall[] = [];
       let text = '';
-      for await (const event of this.llm.stream({ system, messages, tools: offered })) {
+      for await (const event of this.llm.stream({ system, messages, tools: offered, signal })) {
         if (event.type === 'text') {
           text += event.delta;
           yield event;
@@ -119,6 +128,9 @@ export class ChatWithAssistantUseCase {
       }
       messages.push({ role: 'assistant', content: text, toolCalls: calls });
       for (const call of calls) {
+        if (signal?.aborted) {
+          return;
+        }
         yield { type: 'tool', name: call.name };
         const result = await this.run(actor, tools, call);
         messages.push({ role: 'tool', toolCallId: call.id, name: call.name, content: JSON.stringify(result) });

@@ -38,10 +38,14 @@ export class AiController {
     @Body() dto: ChatDto,
     @Res() response: Response,
   ): Promise<void> {
+    // Aborted when the connection closes, so a model nobody is listening to stops being paid for
+    const gone = new AbortController();
+    response.once('close', () => gone.abort());
     const events = await this.chatWithAssistant
       .execute(
         { userId: user.userId, institutionId, isPlatformAdmin: user.isPlatformAdmin, memberships: user.memberships },
         dto.messages.map(({ role, content }) => ({ role, content })),
+        gone.signal,
       )
       .catch((error: unknown) => {
         if (error instanceof AssistantBusyException) {
@@ -60,20 +64,25 @@ export class AiController {
     const send = (event: StreamEvent) => response.write(`data: ${JSON.stringify(event)}\n\n`);
     try {
       for await (const event of events) {
-        // The member closed the chat: stop asking the model for an answer nobody reads
-        if (response.destroyed) {
+        if (gone.signal.aborted) {
           return;
         }
         send(event);
       }
       send({ type: 'done' });
     } catch (error) {
+      if (gone.signal.aborted) {
+        return;
+      }
       if (!(error instanceof DomainException)) {
         this.logger.error(error instanceof Error ? error.stack : String(error));
       }
       send({ type: 'error', code: error instanceof DomainException ? error.code : 'ASSISTANT_UNAVAILABLE' });
     } finally {
-      response.end();
+      // Nothing is written to a connection that is gone; ending it twice is harmless
+      if (!response.writableEnded) {
+        response.end();
+      }
     }
   }
 }

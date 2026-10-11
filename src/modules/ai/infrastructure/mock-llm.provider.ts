@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { IdKind } from '../application/assistant-prompt.js';
 import type { ToolResult } from '../domain/assistant.js';
 import type { LLMEvent, LLMMessage, LLMProvider, LLMRequest } from '../domain/ports/assistant.ports.js';
 
@@ -30,17 +31,33 @@ const plain = (text: string) =>
 const number = (value: number) => new Intl.NumberFormat('es', { maximumFractionDigits: 2 }).format(value);
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** The names and ids the prompt lists, in the format of `idLine`. */
-function listedIds(system: string): NamedId[] {
-  return [...system.matchAll(/^- (.+) \[id: ([0-9a-f-]{36})\]$/gim)].map(([, label, id]) => ({
-    // "Matemática (MAT)" and "Examen parcial, Matemática" are both named by their first part
-    name: label.split(/ \(|, /)[0],
-    id,
-  }));
+/** The names and ids of one kind the prompt lists, in the format of `idLine`. */
+function listedIds(system: string, kind: IdKind): NamedId[] {
+  return [...system.matchAll(/^- (.+) \[(\w+): ([0-9a-f-]{36})\]$/gim)]
+    .filter(([, , listedKind]) => listedKind === kind)
+    .map(([, label, , id]) => ({ name: label, id }));
 }
 
-const mentioned = (question: string, names: NamedId[]) =>
-  names.find(({ name }) => plain(question).includes(plain(name)));
+/** "Matemática (MAT)", "Examen parcial, Matemática" and "Matemática, 1ro A" are also named by their first part. */
+const shortName = (label: string) => label.split(/ \(|, /)[0];
+
+/** The listed thing a question names, by its whole label or by its short name. */
+function mentioned(question: string, names: NamedId[]): NamedId | undefined {
+  const text = plain(question);
+  return (
+    names.find(({ name }) => text.includes(plain(name))) ??
+    names.find(({ name }) => shortName(name) !== '' && text.includes(plain(shortName(name))))
+  );
+}
+
+/** The one a question names, the only one there is, or the question to ask back. */
+function chosen(question: string, names: NamedId[], askWhich: string, none: string): NamedId | string {
+  const named = mentioned(question, names) ?? (names.length === 1 ? names[0] : undefined);
+  if (named) {
+    return named;
+  }
+  return names.length > 0 ? `${askWhich} ${names.map(({ name }) => name).join('; ')}.` : none;
+}
 
 /** The month a question is about as `YYYY-MM`; the month of `today` when it names none. */
 function monthIn(question: string, today: string): string {
@@ -132,6 +149,61 @@ function describeEvaluation({ evaluation, course }: { evaluation: EvaluationData
   return lines.join('\n');
 }
 
+interface AveragesData {
+  subject: string;
+  group: string;
+  publishedEvaluations: number;
+  classAveragePercent: number | null;
+  students: Array<{ name: string; averagePercent: number | null; gradedWeightPercent: number }>;
+}
+
+interface AttendanceData {
+  group: string;
+  thresholdPercent: number;
+  classesHeld: number;
+  studentsInGroup: number;
+  atRisk: Array<{ name: string; attendedClasses: number; countedClasses: number; attendancePercent: number }>;
+  studentsWithoutRecords: number;
+}
+
+function describeAverages(data: AveragesData): string {
+  const course = `${data.subject}, grupo ${data.group}`;
+  if (data.students.length === 0) {
+    return `${course}: todavía no hay estudiantes inscritos.`;
+  }
+  if (data.classAveragePercent === null) {
+    return `${course}: todavía no hay notas registradas (${data.publishedEvaluations} evaluaciones publicadas).`;
+  }
+  return [
+    `Promedios de ${course} (promedio del grupo: ${number(data.classAveragePercent)}%):`,
+    ...data.students.map((student) =>
+      student.averagePercent === null
+        ? `- ${student.name}: sin notas.`
+        : `- ${student.name}: ${number(student.averagePercent)}% (evaluado el ${number(student.gradedWeightPercent)}% de la materia).`,
+    ),
+  ].join('\n');
+}
+
+function describeAttendance(data: AttendanceData): string {
+  const lines =
+    data.atRisk.length > 0
+      ? [
+          `Estudiantes del grupo ${data.group} con menos del ${number(data.thresholdPercent)}% de asistencia en tus clases:`,
+          ...data.atRisk.map(
+            (student) =>
+              `- ${student.name}: ${number(student.attendancePercent)}% (${student.attendedClasses} de ${student.countedClasses} clases).`,
+          ),
+        ]
+      : [
+          `Ningún estudiante del grupo ${data.group} está por debajo del ${number(data.thresholdPercent)}% de asistencia en tus clases.`,
+        ];
+  lines.push(`Clases dictadas: ${data.classesHeld}. Estudiantes inscritos: ${data.studentsInGroup}.`);
+  if (data.studentsWithoutRecords > 0) {
+    lines.push(`Estudiantes sin asistencia registrada todavía: ${data.studentsWithoutRecords}.`);
+  }
+  return lines.join('\n');
+}
+
 /** Writes the answer a model would give after reading one tool result. */
 function describe(tool: string, content: string): string {
   const result = JSON.parse(content) as ToolResult;
@@ -145,6 +217,10 @@ function describe(tool: string, content: string): string {
       return describeHistory(result.data as { courses: CourseData[] });
     case 'getEvaluationContext':
       return describeEvaluation(result.data as { evaluation: EvaluationData; course: CourseData });
+    case 'getCourseAverages':
+      return describeAverages(result.data as AveragesData);
+    case 'getGroupAttendanceRisk':
+      return describeAttendance(result.data as AttendanceData);
     default:
       return 'Consulté los datos, pero no sé cómo resumirlos.';
   }
@@ -162,12 +238,12 @@ export class MockLLMProvider implements LLMProvider {
   async *stream(request: LLMRequest): AsyncGenerator<LLMEvent> {
     const last = request.messages[request.messages.length - 1];
     if (last.role === 'tool') {
-      yield* this.write(this.fromResults(request.messages));
+      yield* this.write(this.fromResults(request.messages), request.signal);
       return;
     }
     const call = this.toolFor(last.content, request);
     if (typeof call === 'string') {
-      yield* this.write(call);
+      yield* this.write(call, request.signal);
     } else {
       yield { type: 'tool_call', call: { id: randomUUID(), ...call } };
     }
@@ -188,19 +264,37 @@ export class MockLLMProvider implements LLMProvider {
   /** The tool a question calls for, or the text to answer with when none does. */
   private toolFor(question: string, { system, tools }: LLMRequest): { name: string; input: unknown } | string {
     const offered = new Set(tools.map((tool) => tool.name));
-    const names = listedIds(system);
     const text = plain(question);
     if (offered.has('getTeacherHours') && /\bhoras?\b|\bhours?\b/.test(text)) {
-      const subject = mentioned(question, names);
+      const subjects = listedIds(system, 'subjectId');
+      const subject = mentioned(question, subjects);
       const today = /Today is (\d{4}-\d{2}-\d{2})/.exec(system)?.[1] ?? new Date().toISOString().slice(0, 10);
       return subject
         ? { name: 'getTeacherHours', input: { subjectId: subject.id, month: monthIn(question, today) } }
-        : names.length > 0
-          ? `¿De qué materia quieres saber las horas? Puedo consultar: ${names.map(({ name }) => name).join(', ')}.`
+        : subjects.length > 0
+          ? `¿De qué materia quieres saber las horas? Puedo consultar: ${subjects.map(({ name }) => shortName(name)).join(', ')}.`
           : 'Todavía no hay materias registradas en la institución.';
     }
+    if (offered.has('getGroupAttendanceRisk') && /asistencia|ausen|falta|riesgo|attendance/.test(text)) {
+      const group = chosen(
+        question,
+        listedIds(system, 'groupId'),
+        '¿De qué grupo quieres revisar la asistencia? Tus grupos:',
+        'Todavía no tienes grupos asignados.',
+      );
+      return typeof group === 'string' ? group : { name: 'getGroupAttendanceRisk', input: { groupId: group.id } };
+    }
+    if (offered.has('getCourseAverages') && /promedio|nota|rendimiento|average|grade/.test(text)) {
+      const course = chosen(
+        question,
+        listedIds(system, 'courseId'),
+        '¿De qué materia quieres ver los promedios? Tus materias:',
+        'Todavía no tienes materias asignadas.',
+      );
+      return typeof course === 'string' ? course : { name: 'getCourseAverages', input: { courseId: course.id } };
+    }
     if (offered.has('getEvaluationContext')) {
-      const evaluation = mentioned(question, names);
+      const evaluation = mentioned(question, listedIds(system, 'evaluationId'));
       if (evaluation) {
         return { name: 'getEvaluationContext', input: { evaluationId: evaluation.id } };
       }
@@ -211,14 +305,20 @@ export class MockLLMProvider implements LLMProvider {
     if (offered.has('getTeacherHours')) {
       return 'Hola, soy el asistente de Everlearn. Puedo decirte cuántas horas de clase tiene cada docente de una materia en un mes. Por ejemplo: «¿Cuántas horas de Matemática hubo en octubre?»';
     }
+    if (offered.has('getCourseAverages')) {
+      return 'Hola, soy el asistente de Everlearn. Puedo decirte los promedios de tus estudiantes en una materia y quiénes están en riesgo por inasistencia en un grupo. Por ejemplo: «¿Cómo van los promedios de Matemática?»';
+    }
     if (offered.has('getAcademicHistory')) {
       return 'Hola, soy el asistente de Everlearn. Puedo consultar tus notas y promedios, o contarte los detalles de una evaluación. Por ejemplo: «¿Cómo van mis notas?»';
     }
     return 'Hola, soy el asistente de Everlearn. Por ahora no tengo acceso a tus datos en la plataforma, pero puedo ayudarte con dudas generales.';
   }
 
-  private async *write(text: string): AsyncGenerator<LLMEvent> {
+  private async *write(text: string, signal?: AbortSignal): AsyncGenerator<LLMEvent> {
     for (const chunk of text.match(/\S+\s*/g) ?? []) {
+      if (signal?.aborted) {
+        return;
+      }
       if (this.chunkDelayMs > 0) {
         await wait(this.chunkDelayMs);
       }

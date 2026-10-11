@@ -75,7 +75,7 @@ describe('Virtual classroom (HTTP)', () => {
   });
 
   afterEach(async () => {
-    await ctx.app.close();
+    await ctx.close();
   });
 
   describe('access tokens', () => {

@@ -9,8 +9,19 @@ const EXAM = randomUUID();
 const tool = (name: string): ToolDefinition => ({ name, description: '', parameters: {} });
 const ADMIN_TOOLS = [tool('getTeacherHours')];
 const STUDENT_TOOLS = [tool('getAcademicHistory'), tool('getEvaluationContext')];
-const ADMIN_PROMPT = ['Today is 2026-10-11.', idLine('Matemática (MAT)', MATH)].join('\n');
-const STUDENT_PROMPT = ['Today is 2026-10-11.', idLine('Examen parcial, Matemática', EXAM)].join('\n');
+const ADMIN_PROMPT = ['Today is 2026-10-11.', idLine('subjectId', 'Matemática (MAT)', MATH)].join('\n');
+const STUDENT_PROMPT = ['Today is 2026-10-11.', idLine('evaluationId', 'Examen parcial, Matemática', EXAM)].join('\n');
+const MATH_1A = randomUUID();
+const HISTORY_2B = randomUUID();
+const GROUP_1A = randomUUID();
+const GROUP_2B = randomUUID();
+const TEACHER_TOOLS = [tool('getCourseAverages'), tool('getGroupAttendanceRisk')];
+const TEACHER_PROMPT = [
+  idLine('courseId', 'Matemática, 1ro A', MATH_1A),
+  idLine('courseId', 'Historia, 2do B', HISTORY_2B),
+  idLine('groupId', '1ro A', GROUP_1A),
+  idLine('groupId', '2do B', GROUP_2B),
+].join('\n');
 
 const provider = new MockLLMProvider(0);
 
@@ -63,6 +74,27 @@ describe('MockLLMProvider choosing a tool', () => {
 
     expect(evaluation.calls[0]).toMatchObject({ name: 'getEvaluationContext', input: { evaluationId: EXAM } });
     expect(history.calls[0]).toMatchObject({ name: 'getAcademicHistory', input: {} });
+  });
+
+  it("asks for the averages of the course, or the attendance of the group, a Teacher names", async () => {
+    const averages = await ask(TEACHER_PROMPT, TEACHER_TOOLS, '¿Cómo van los promedios de historia?');
+    const attendance = await ask(TEACHER_PROMPT, TEACHER_TOOLS, '¿Quién está en riesgo por asistencia en 2do B?');
+    const whichCourse = await ask(TEACHER_PROMPT, TEACHER_TOOLS, '¿Cómo van las notas?');
+
+    expect(averages.calls[0]).toMatchObject({ name: 'getCourseAverages', input: { courseId: HISTORY_2B } });
+    expect(attendance.calls[0]).toMatchObject({ name: 'getGroupAttendanceRisk', input: { groupId: GROUP_2B } });
+    expect(whichCourse.calls).toEqual([]);
+    expect(whichCourse.text).toContain('Tus materias: Matemática, 1ro A; Historia, 2do B.');
+  });
+
+  it('needs no name when the Teacher has a single course or group', async () => {
+    const prompt = [idLine('courseId', 'Matemática, 1ro A', MATH_1A), idLine('groupId', '1ro A', GROUP_1A)].join('\n');
+
+    const averages = await ask(prompt, TEACHER_TOOLS, '¿Cómo van los promedios?');
+    const attendance = await ask(prompt, TEACHER_TOOLS, '¿Quién falta mucho?');
+
+    expect(averages.calls[0].input).toEqual({ courseId: MATH_1A });
+    expect(attendance.calls[0].input).toEqual({ groupId: GROUP_1A });
   });
 
   it('never asks for a tool it was not offered', async () => {
@@ -126,6 +158,65 @@ describe('MockLLMProvider writing from a result', () => {
     expect(context.text).toContain('Fecha de entrega: 10 de noviembre de 2026.');
     expect(context.text).toContain('Tu nota: 15,5/20.');
     expect(context.text).toContain('Comentario de tu docente: Bien');
+  });
+
+  it("lists a course's averages and a group's attendance risk", async () => {
+    const averages = await after('getCourseAverages', {
+      ok: true,
+      data: {
+        subject: 'Matemática',
+        group: '1ro A',
+        publishedEvaluations: 2,
+        classAveragePercent: 70,
+        students: [
+          { name: 'Grace Hopper', averagePercent: 77.5, gradedWeightPercent: 60 },
+          { name: 'Linus Pauling', averagePercent: null, gradedWeightPercent: 0 },
+        ],
+      },
+    });
+    const attendance = await after('getGroupAttendanceRisk', {
+      ok: true,
+      data: {
+        group: '1ro A',
+        thresholdPercent: 70,
+        classesHeld: 10,
+        studentsInGroup: 3,
+        atRisk: [{ name: 'Linus Pauling', attendedClasses: 5, countedClasses: 10, attendancePercent: 50 }],
+        studentsWithoutRecords: 1,
+      },
+    });
+    const nobody = await after('getGroupAttendanceRisk', {
+      ok: true,
+      data: { group: '1ro A', thresholdPercent: 70, classesHeld: 0, studentsInGroup: 2, atRisk: [], studentsWithoutRecords: 2 },
+    });
+
+    expect(averages.text).toBe(
+      [
+        'Promedios de Matemática, grupo 1ro A (promedio del grupo: 70%):',
+        '- Grace Hopper: 77,5% (evaluado el 60% de la materia).',
+        '- Linus Pauling: sin notas.',
+      ].join('\n'),
+    );
+    expect(attendance.text).toContain('- Linus Pauling: 50% (5 de 10 clases).');
+    expect(attendance.text).toContain('Estudiantes sin asistencia registrada todavía: 1.');
+    expect(nobody.text).toContain('Ningún estudiante del grupo 1ro A está por debajo del 70% de asistencia');
+  });
+
+  it('stops writing when the request is abandoned', async () => {
+    const gone = new AbortController();
+    const events: LLMEvent[] = [];
+
+    for await (const event of provider.stream({
+      system: '',
+      tools: [],
+      messages: [{ role: 'user', content: 'Hola' }],
+      signal: gone.signal,
+    })) {
+      events.push(event);
+      gone.abort();
+    }
+
+    expect(events).toHaveLength(1);
   });
 
   it('says so when the tool found nothing', async () => {

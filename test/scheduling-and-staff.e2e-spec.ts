@@ -34,7 +34,7 @@ describe('Staff permissions and scheduling (HTTP)', () => {
   });
 
   afterEach(async () => {
-    await ctx.app.close();
+    await ctx.close();
   });
 
   describe('the registration hierarchy', () => {

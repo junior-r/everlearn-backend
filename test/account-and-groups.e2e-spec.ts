@@ -34,7 +34,7 @@ describe('Account security, multi-institution membership and groups (HTTP)', () 
   });
 
   afterEach(async () => {
-    await ctx.app.close();
+    await ctx.close();
   });
 
   describe('forced password change', () => {
