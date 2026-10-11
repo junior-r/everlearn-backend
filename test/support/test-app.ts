@@ -19,6 +19,7 @@ import {
   SESSION_RECORDER,
   VIDEO_TOKEN_ISSUER,
 } from '../../src/modules/classroom/domain/ports/classroom.ports.js';
+import { EVALUATION_REPOSITORY } from '../../src/modules/evaluations/domain/ports/evaluation.ports.js';
 import { UserStatus } from '../../src/modules/identity/domain/entities/user.entity.js';
 import { GOOGLE_OAUTH_GATEWAY } from '../../src/modules/identity/domain/ports/google-oauth.gateway.js';
 import { MEMBER_REPOSITORY } from '../../src/modules/identity/domain/ports/member.repository.js';
@@ -42,6 +43,7 @@ import { PrismaService } from '../../src/shared/infrastructure/prisma/prisma.ser
 import { REDIS_CLIENT } from '../../src/shared/infrastructure/redis/redis.tokens.js';
 import { createAdminFakes } from './admin.fakes.js';
 import { FakeVideoTokenIssuer, InMemoryClassroomRepository } from './classroom.fakes.js';
+import { InMemoryEvaluationRepository } from './evaluation.fakes.js';
 import {
   InMemoryGroupRepository,
   InMemoryMemberDirectory,
@@ -124,6 +126,7 @@ export async function createTestApp(extraControllers: Type[] = []) {
     scheduleLock: new InMemoryScheduleLock(),
     classroom: new InMemoryClassroomRepository(groups, directory),
     videoTokens: new FakeVideoTokenIssuer(),
+    evaluations: new InMemoryEvaluationRepository(groups, directory),
     google: new FakeGoogleGateway(),
     revocations: new InMemoryRefreshTokenRevocations(),
     rateLimiter: new InMemoryRateLimiter(),
@@ -191,6 +194,8 @@ export async function createTestApp(extraControllers: Type[] = []) {
     .useValue(fakes.classroom)
     .overrideProvider(VIDEO_TOKEN_ISSUER)
     .useValue(fakes.videoTokens)
+    .overrideProvider(EVALUATION_REPOSITORY)
+    .useValue(fakes.evaluations)
     .compile();
 
   const app: INestApplication<App> = moduleRef.createNestApplication();
