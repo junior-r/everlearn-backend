@@ -32,6 +32,15 @@ export interface AppConfig {
   platformAdmin: PlatformAdminConfig | null;
   /** The ocr-server microservice. Null uses the built-in mock, for running without Docker. */
   ocr: OcrServiceConfig | null;
+  /** Credentials for signing LiveKit access tokens. Null makes video classes unavailable. */
+  livekit: LiveKitConfig | null;
+  /** Shared with our microservices. Null refuses every call to the internal API. */
+  internalServiceSecret: string | null;
+}
+
+export interface LiveKitConfig {
+  apiKey: string;
+  apiSecret: string;
 }
 
 export interface OcrServiceConfig {
@@ -105,6 +114,13 @@ function platformAdminConfig(env: Env): PlatformAdminConfig | null {
   return { email, password };
 }
 
+function liveKitConfig(env: Env): LiveKitConfig | null {
+  if (!env.LIVEKIT_API_KEY || !env.LIVEKIT_API_SECRET) {
+    return null;
+  }
+  return { apiKey: env.LIVEKIT_API_KEY, apiSecret: secret(env, 'LIVEKIT_API_SECRET') };
+}
+
 /**
  * Builds the typed configuration from the environment and fails fast on
  * missing or weak values. Google OAuth is optional and null when unset.
@@ -132,5 +148,7 @@ export function loadAppConfig(env: Env): AppConfig {
     ocr: env.OCR_SERVICE_URL
       ? { url: env.OCR_SERVICE_URL, internalSecret: required(env, 'INTERNAL_SERVICE_SECRET') }
       : null,
+    livekit: liveKitConfig(env),
+    internalServiceSecret: env.INTERNAL_SERVICE_SECRET || null,
   };
 }

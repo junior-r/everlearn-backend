@@ -1,0 +1,60 @@
+import type {
+  ChatMessage,
+  ClassroomCourse,
+  ClassroomRole,
+  Participation,
+  SessionAccess,
+  TeachableCourse,
+  TranscriptSegment,
+} from '../classroom.js';
+
+export const CLASSROOM_REPOSITORY = Symbol('ClassroomRepository');
+export const SESSION_RECORDER = Symbol('SessionRecorder');
+export const VIDEO_TOKEN_ISSUER = Symbol('VideoTokenIssuer');
+
+export interface ClassroomRepository {
+  /** The courses a membership teaches, or follows through an active enrollment, inside the institution. */
+  listCourses(
+    institutionId: string,
+    membershipId: string,
+    role: ClassroomRole,
+  ): Promise<ClassroomCourse[]>;
+  /** Resolves to null unless the group belongs to the institution and takes the subject. */
+  findCourse(institutionId: string, groupId: string, subjectId: string): Promise<TeachableCourse | null>;
+  findOpenSessionId(courseId: string): Promise<string | null>;
+  createSession(courseId: string, startsAt: Date, endsAt: Date): Promise<string>;
+  /** Resolves to null unless the session belongs to the institution. */
+  findSession(institutionId: string, sessionId: string): Promise<SessionAccess | null>;
+  isEnrolled(groupId: string, studentMembershipId: string): Promise<boolean>;
+  displayName(membershipId: string): Promise<string>;
+}
+
+/**
+ * Stores what the video-server reports about a live room. Every method is
+ * idempotent, because deliveries are retried, and rejects with
+ * ClassSessionNotFoundException when the session or the member does not exist.
+ */
+export interface SessionRecorder {
+  start(sessionId: string, at: Date): Promise<void>;
+  /** Closes the session and any connection still recorded as open. */
+  finish(sessionId: string, at: Date): Promise<void>;
+  join(participation: Participation): Promise<void>;
+  leave(participation: Participation, leftAt: Date): Promise<void>;
+  /** Marks an enrolled Student present. Does nothing for other members or when a record already exists. */
+  markPresent(sessionId: string, membershipId: string): Promise<void>;
+  addChatMessage(message: ChatMessage): Promise<void>;
+  addTranscriptSegment(segment: TranscriptSegment): Promise<void>;
+}
+
+export interface VideoGrant {
+  roomName: string;
+  /** Always the participant's Membership id. */
+  identity: string;
+  displayName: string;
+  canModerate: boolean;
+}
+
+export interface VideoTokenIssuer {
+  /** Rejects with VideoUnavailableException when no video server is configured. */
+  issue(grant: VideoGrant): Promise<string>;
+}

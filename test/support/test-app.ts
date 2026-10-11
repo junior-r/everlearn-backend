@@ -14,6 +14,11 @@ import {
   MEMBER_DIRECTORY,
   PERIOD_REPOSITORY,
 } from '../../src/modules/academics/domain/ports/group.repositories.js';
+import {
+  CLASSROOM_REPOSITORY,
+  SESSION_RECORDER,
+  VIDEO_TOKEN_ISSUER,
+} from '../../src/modules/classroom/domain/ports/classroom.ports.js';
 import { UserStatus } from '../../src/modules/identity/domain/entities/user.entity.js';
 import { GOOGLE_OAUTH_GATEWAY } from '../../src/modules/identity/domain/ports/google-oauth.gateway.js';
 import { MEMBER_REPOSITORY } from '../../src/modules/identity/domain/ports/member.repository.js';
@@ -36,6 +41,7 @@ import { RATE_LIMITER } from '../../src/shared/domain/rate-limit/rate-limiter.js
 import { PrismaService } from '../../src/shared/infrastructure/prisma/prisma.service.js';
 import { REDIS_CLIENT } from '../../src/shared/infrastructure/redis/redis.tokens.js';
 import { createAdminFakes } from './admin.fakes.js';
+import { FakeVideoTokenIssuer, InMemoryClassroomRepository } from './classroom.fakes.js';
 import {
   InMemoryGroupRepository,
   InMemoryMemberDirectory,
@@ -61,6 +67,7 @@ import {
 
 export const TEST_FRONTEND_URL = 'http://frontend.test';
 export const TEST_RATE_LIMIT = 5;
+export const TEST_INTERNAL_SECRET = 'internal-secret-for-tests';
 
 /**
  * Boots the real AppModule (guards, pipes, filters, controllers, use cases)
@@ -115,6 +122,8 @@ export async function createTestApp(extraControllers: Type[] = []) {
     availability: new InMemoryAvailabilityRepository(),
     schedule: new InMemoryScheduleRepository(groups, directory),
     scheduleLock: new InMemoryScheduleLock(),
+    classroom: new InMemoryClassroomRepository(groups, directory),
+    videoTokens: new FakeVideoTokenIssuer(),
     google: new FakeGoogleGateway(),
     revocations: new InMemoryRefreshTokenRevocations(),
     rateLimiter: new InMemoryRateLimiter(),
@@ -133,6 +142,7 @@ export async function createTestApp(extraControllers: Type[] = []) {
         JWT_REFRESH_SECRET: 'b'.repeat(32),
         FRONTEND_URL: TEST_FRONTEND_URL,
         RATE_LIMIT_AUTH_MAX_ATTEMPTS: String(TEST_RATE_LIMIT),
+        INTERNAL_SERVICE_SECRET: TEST_INTERNAL_SECRET,
       }),
     )
     .overrideProvider(PrismaService)
@@ -175,6 +185,12 @@ export async function createTestApp(extraControllers: Type[] = []) {
     .useValue(fakes.schedule)
     .overrideProvider(SCHEDULE_LOCK)
     .useValue(fakes.scheduleLock)
+    .overrideProvider(CLASSROOM_REPOSITORY)
+    .useValue(fakes.classroom)
+    .overrideProvider(SESSION_RECORDER)
+    .useValue(fakes.classroom)
+    .overrideProvider(VIDEO_TOKEN_ISSUER)
+    .useValue(fakes.videoTokens)
     .compile();
 
   const app: INestApplication<App> = moduleRef.createNestApplication();

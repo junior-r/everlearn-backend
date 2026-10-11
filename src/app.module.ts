@@ -2,6 +2,7 @@ import { Module, ValidationPipe } from '@nestjs/common';
 import { APP_FILTER, APP_PIPE } from '@nestjs/core';
 import { AppConfigModule } from './config/app-config.module.js';
 import { AcademicsModule } from './modules/academics/academics.module.js';
+import { ClassroomModule } from './modules/classroom/classroom.module.js';
 import { IdentityModule } from './modules/identity/identity.module.js';
 import { InstitutionsModule } from './modules/institutions/institutions.module.js';
 import { OnboardingModule } from './modules/onboarding/onboarding.module.js';
@@ -20,6 +21,7 @@ import { DomainExceptionFilter } from './shared/presentation/filters/domain-exce
     InstitutionsModule,
     AcademicsModule,
     SchedulingModule,
+    ClassroomModule,
     OnboardingModule,
   ],
   controllers: [HealthController],

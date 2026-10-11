@@ -1,0 +1,429 @@
+import { randomUUID } from 'node:crypto';
+import { JwtService } from '@nestjs/jwt';
+import { createAdminFakes } from '../../../../../test/support/admin.fakes.js';
+import {
+  FakeVideoTokenIssuer,
+  InMemoryClassroomRepository,
+} from '../../../../../test/support/classroom.fakes.js';
+import {
+  InMemoryGroupRepository,
+  InMemoryMemberDirectory,
+  InMemoryPeriodRepository,
+} from '../../../../../test/support/group.fakes.js';
+import type { MembershipClaim } from '../../../../shared/domain/auth/authenticated-user.js';
+import { Role } from '../../../../shared/domain/auth/role.js';
+import {
+  ClassSessionClosedException,
+  ClassSessionNotFoundException,
+  CourseNotFoundException,
+  InvalidSessionEventException,
+  NotClassParticipantException,
+  NotCourseTeacherException,
+  SessionStatus,
+  VideoUnavailableException,
+} from '../../domain/classroom.js';
+import { LiveKitTokenIssuer } from '../../infrastructure/livekit-token-issuer.js';
+import {
+  IssueClassroomTokenUseCase,
+  ListMyCoursesUseCase,
+  StartClassSessionUseCase,
+} from './classroom.use-cases.js';
+import {
+  RecordChatMessageUseCase,
+  RecordParticipationUseCase,
+  RecordRoomLifecycleUseCase,
+  RecordTranscriptSegmentUseCase,
+} from './session-recording.use-cases.js';
+
+const A = 'institution-a';
+const B = 'institution-b';
+const MATH = 'subject-math';
+const at = (minute: number) => new Date(Date.UTC(2026, 9, 12, 8, minute));
+
+/** One group of institution A taking maths with Alan, with Grace enrolled; Emmy and Linus are outsiders. */
+function setup() {
+  const directory = new InMemoryMemberDirectory();
+  const groups = new InMemoryGroupRepository(
+    createAdminFakes().pensums,
+    new InMemoryPeriodRepository(),
+    directory,
+  );
+  const classroom = new InMemoryClassroomRepository(groups, directory);
+  const tokens = new FakeVideoTokenIssuer();
+  const claim = (institutionId: string, role: Role, firstName: string): MembershipClaim => ({
+    id: directory.add(institutionId, role, firstName, 'Prueba').membershipId,
+    institutionId,
+    role,
+  });
+  const alan = claim(A, Role.TEACHER, 'Alan');
+  const emmy = claim(A, Role.TEACHER, 'Emmy');
+  const grace = claim(A, Role.STUDENT, 'Grace');
+  const linus = claim(A, Role.STUDENT, 'Linus');
+  const groupId = randomUUID();
+  groups.rows.push({
+    id: groupId,
+    institutionId: A,
+    name: '1ro A',
+    level: 1,
+    capacity: null,
+    pensumId: 'pensum',
+    periodId: 'period',
+    teachers: new Map([[MATH, alan.id]]),
+    studentIds: [grace.id],
+  });
+  const start = new StartClassSessionUseCase(classroom);
+  const open = async () =>
+    (await start.execute({ institutionId: A, memberships: [alan], groupId, subjectId: MATH })).sessionId;
+  return {
+    classroom,
+    tokens,
+    groupId,
+    alan,
+    emmy,
+    grace,
+    linus,
+    start,
+    open,
+    list: new ListMyCoursesUseCase(classroom),
+    issue: new IssueClassroomTokenUseCase(classroom, tokens),
+    lifecycle: new RecordRoomLifecycleUseCase(classroom),
+    participation: new RecordParticipationUseCase(classroom),
+    chat: new RecordChatMessageUseCase(classroom),
+    transcript: new RecordTranscriptSegmentUseCase(classroom),
+  };
+}
+
+describe('starting a class', () => {
+  it('lets the assigned Teacher open a session, and returns the same one while it is open', async () => {
+    const ctx = setup();
+    const input = { institutionId: A, memberships: [ctx.alan], groupId: ctx.groupId, subjectId: MATH };
+
+    const first = await ctx.start.execute(input, at(0));
+    const again = await ctx.start.execute(input, at(5));
+
+    expect(again).toEqual(first);
+    expect(ctx.classroom.sessions).toHaveLength(1);
+    expect(ctx.classroom.sessions[0]).toMatchObject({
+      status: SessionStatus.SCHEDULED,
+      startsAt: at(0),
+      endsAt: at(60),
+    });
+  });
+
+  it('opens a new session once the previous class has ended', async () => {
+    const ctx = setup();
+    const first = await ctx.open();
+    await ctx.lifecycle.finished(first, at(50));
+
+    expect(await ctx.open()).not.toBe(first);
+  });
+
+  it('refuses another Teacher, a Student, and a Teacher role held in another institution', async () => {
+    const ctx = setup();
+    const attempt = (memberships: MembershipClaim[]) =>
+      ctx.start.execute({ institutionId: A, memberships, groupId: ctx.groupId, subjectId: MATH });
+
+    await expect(attempt([ctx.emmy])).rejects.toBeInstanceOf(NotCourseTeacherException);
+    await expect(attempt([ctx.grace])).rejects.toBeInstanceOf(NotCourseTeacherException);
+    await expect(attempt([{ ...ctx.alan, institutionId: B }])).rejects.toBeInstanceOf(
+      NotCourseTeacherException,
+    );
+    expect(ctx.classroom.sessions).toHaveLength(0);
+  });
+
+  it('reports a group of another institution, or a subject with no Teacher, as not found', async () => {
+    const ctx = setup();
+    const attempt = (institutionId: string, subjectId: string) =>
+      ctx.start.execute({ institutionId, memberships: [ctx.alan], groupId: ctx.groupId, subjectId });
+
+    await expect(attempt(B, MATH)).rejects.toBeInstanceOf(CourseNotFoundException);
+    await expect(attempt(A, 'subject-physics')).rejects.toBeInstanceOf(CourseNotFoundException);
+  });
+});
+
+describe('listing my courses', () => {
+  it('shows a Teacher what they teach and a Student what they attend, with the open session', async () => {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+
+    const teaching = await ctx.list.execute(A, [ctx.alan]);
+    const attending = await ctx.list.execute(A, [ctx.grace]);
+
+    expect(teaching).toEqual([
+      expect.objectContaining({ groupId: ctx.groupId, role: 'TEACHER', openSessionId: sessionId }),
+    ]);
+    expect(attending).toEqual([
+      expect.objectContaining({ groupId: ctx.groupId, role: 'STUDENT', openSessionId: sessionId }),
+    ]);
+    expect(attending[0].teacher).toMatchObject({ membershipId: ctx.alan.id, firstName: 'Alan' });
+  });
+
+  it('shows nothing to members with no part in the group, or acting in another institution', async () => {
+    const ctx = setup();
+
+    expect(await ctx.list.execute(A, [ctx.emmy, ctx.linus])).toEqual([]);
+    expect(await ctx.list.execute(B, [ctx.alan])).toEqual([]);
+  });
+});
+
+describe('entering a class', () => {
+  it('gives the assigned Teacher a moderator token whose identity is their Membership id', async () => {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+
+    const access = await ctx.issue.execute(A, [ctx.alan], sessionId);
+
+    expect(access).toMatchObject({
+      token: `token-for-${ctx.alan.id}`,
+      roomName: `class-${sessionId}`,
+      identity: ctx.alan.id,
+      role: 'TEACHER',
+      groupName: '1ro A',
+    });
+    expect(ctx.tokens.grants).toEqual([
+      {
+        roomName: `class-${sessionId}`,
+        identity: ctx.alan.id,
+        displayName: 'Alan Prueba',
+        canModerate: true,
+      },
+    ]);
+  });
+
+  it('gives an enrolled Student a token without moderation rights', async () => {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+
+    const access = await ctx.issue.execute(A, [ctx.grace], sessionId);
+
+    expect(access).toMatchObject({ identity: ctx.grace.id, role: 'STUDENT' });
+    expect(ctx.tokens.grants[0]).toMatchObject({ identity: ctx.grace.id, canModerate: false });
+  });
+
+  it('picks the membership that takes part when the person holds several', async () => {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+
+    const access = await ctx.issue.execute(A, [ctx.linus, ctx.emmy, ctx.grace], sessionId);
+
+    expect(access.identity).toBe(ctx.grace.id);
+  });
+
+  it('refuses a Student who is not enrolled and a Teacher who is not assigned', async () => {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+
+    for (const outsider of [ctx.linus, ctx.emmy]) {
+      await expect(ctx.issue.execute(A, [outsider], sessionId)).rejects.toBeInstanceOf(
+        NotClassParticipantException,
+      );
+    }
+    expect(ctx.tokens.grants).toHaveLength(0);
+  });
+
+  it('refuses a membership id that is right but belongs to another institution', async () => {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+
+    await expect(
+      ctx.issue.execute(A, [{ ...ctx.alan, institutionId: B }], sessionId),
+    ).rejects.toBeInstanceOf(NotClassParticipantException);
+  });
+
+  it('reports a session of another institution as not found', async () => {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+
+    await expect(ctx.issue.execute(B, [ctx.alan], sessionId)).rejects.toBeInstanceOf(
+      ClassSessionNotFoundException,
+    );
+    await expect(ctx.issue.execute(A, [ctx.alan], randomUUID())).rejects.toBeInstanceOf(
+      ClassSessionNotFoundException,
+    );
+  });
+
+  it('refuses everyone once the class has ended, without revealing that to outsiders', async () => {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+    await ctx.lifecycle.finished(sessionId, at(45));
+
+    await expect(ctx.issue.execute(A, [ctx.grace], sessionId)).rejects.toBeInstanceOf(
+      ClassSessionClosedException,
+    );
+    await expect(ctx.issue.execute(A, [ctx.linus], sessionId)).rejects.toBeInstanceOf(
+      NotClassParticipantException,
+    );
+  });
+});
+
+describe('recording a live class', () => {
+  it('moves the session to live and then to completed, ignoring repeated reports', async () => {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+
+    await ctx.lifecycle.started(sessionId, at(1));
+    await ctx.lifecycle.started(sessionId, at(9));
+    expect(ctx.classroom.sessions[0]).toMatchObject({ status: 'LIVE', actualStartedAt: at(1) });
+
+    await ctx.lifecycle.finished(sessionId, at(50));
+    await ctx.lifecycle.finished(sessionId, at(59));
+    await ctx.lifecycle.started(sessionId, at(60));
+    expect(ctx.classroom.sessions[0]).toMatchObject({ status: 'COMPLETED', actualEndedAt: at(50) });
+  });
+
+  it('stores each connection once and marks only enrolled Students present', async () => {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+    const teacher = { sessionId, membershipId: ctx.alan.id, participantSid: 'PA_teacher', joinedAt: at(0) };
+    const student = { sessionId, membershipId: ctx.grace.id, participantSid: 'PA_student', joinedAt: at(2) };
+
+    await ctx.participation.joined(teacher);
+    await ctx.participation.joined(student);
+    await ctx.participation.joined(student);
+
+    expect(ctx.classroom.participations).toHaveLength(2);
+    expect([...ctx.classroom.present]).toEqual([`${sessionId}:${ctx.grace.id}`]);
+    expect(ctx.classroom.sessions[0].peakParticipants).toBe(2);
+  });
+
+  it('keeps a reconnection as its own row and the peak as the most people connected at once', async () => {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+    const first = { sessionId, membershipId: ctx.grace.id, participantSid: 'PA_1', joinedAt: at(0) };
+    const second = { ...first, participantSid: 'PA_2', joinedAt: at(10) };
+
+    await ctx.participation.joined(first);
+    await ctx.participation.left(first, at(5));
+    await ctx.participation.joined(second);
+
+    expect(ctx.classroom.participations).toEqual([
+      { ...first, leftAt: at(5) },
+      { ...second, leftAt: null },
+    ]);
+    expect(ctx.classroom.sessions[0].peakParticipants).toBe(1);
+  });
+
+  it('records a departure whose arrival was never reported, and refuses one before the arrival', async () => {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+    const stay = { sessionId, membershipId: ctx.grace.id, participantSid: 'PA_1', joinedAt: at(10) };
+
+    await ctx.participation.left(stay, at(40));
+    expect(ctx.classroom.participations).toEqual([{ ...stay, leftAt: at(40) }]);
+
+    await expect(ctx.participation.left(stay, at(9))).rejects.toBeInstanceOf(
+      InvalidSessionEventException,
+    );
+  });
+
+  it('closes the connections still open when the room finishes', async () => {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+    await ctx.participation.joined({
+      sessionId,
+      membershipId: ctx.grace.id,
+      participantSid: 'PA_1',
+      joinedAt: at(0),
+    });
+
+    await ctx.lifecycle.finished(sessionId, at(45));
+
+    expect(ctx.classroom.participations[0].leftAt).toEqual(at(45));
+  });
+
+  it('stores chat messages trimmed and only once per id', async () => {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+    const message = { id: randomUUID(), sessionId, senderId: ctx.grace.id, content: '  Hola  ', sentAt: at(3) };
+
+    await ctx.chat.execute(message);
+    await ctx.chat.execute(message);
+
+    expect(ctx.classroom.chatMessages).toEqual([{ ...message, content: 'Hola' }]);
+    await expect(ctx.chat.execute({ ...message, id: randomUUID(), content: '   ' })).rejects.toBeInstanceOf(
+      InvalidSessionEventException,
+    );
+    await expect(
+      ctx.chat.execute({ ...message, id: randomUUID(), content: 'x'.repeat(2001) }),
+    ).rejects.toBeInstanceOf(InvalidSessionEventException);
+  });
+
+  it('stores transcript segments, with or without a speaker, and refuses one that ends before it starts', async () => {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+    const segment = {
+      id: randomUUID(),
+      sessionId,
+      speakerId: ctx.alan.id,
+      text: 'Buenos días',
+      language: 'es',
+      startedAt: at(1),
+      endedAt: at(2),
+    };
+
+    await ctx.transcript.execute(segment);
+    await ctx.transcript.execute({ ...segment, id: randomUUID(), speakerId: null });
+
+    expect(ctx.classroom.transcriptSegments).toHaveLength(2);
+    await expect(
+      ctx.transcript.execute({ ...segment, id: randomUUID(), endedAt: at(0) }),
+    ).rejects.toBeInstanceOf(InvalidSessionEventException);
+  });
+
+  it('reports events about an unknown session or member as not found', async () => {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+    const stay = { sessionId, membershipId: ctx.grace.id, participantSid: 'PA_1', joinedAt: at(0) };
+
+    await expect(ctx.lifecycle.started(randomUUID(), at(0))).rejects.toBeInstanceOf(
+      ClassSessionNotFoundException,
+    );
+    await expect(
+      ctx.participation.joined({ ...stay, sessionId: randomUUID() }),
+    ).rejects.toBeInstanceOf(ClassSessionNotFoundException);
+    await expect(
+      ctx.participation.joined({ ...stay, membershipId: randomUUID() }),
+    ).rejects.toBeInstanceOf(ClassSessionNotFoundException);
+  });
+});
+
+describe('LiveKit access tokens', () => {
+  const config = { apiKey: 'devkey', apiSecret: 's'.repeat(32) };
+  const jwt = new JwtService({});
+  const grant = { roomName: 'class-1', identity: 'membership-1', displayName: 'Alan Prueba', canModerate: true };
+
+  it('signs a token LiveKit accepts: issued by the API key, for one room and one identity', async () => {
+    const token = await new LiveKitTokenIssuer(jwt, config).issue(grant);
+
+    const claims = await jwt.verifyAsync<Record<string, unknown>>(token, {
+      secret: config.apiSecret,
+      algorithms: ['HS256'],
+    });
+    expect(claims).toMatchObject({
+      iss: 'devkey',
+      sub: 'membership-1',
+      name: 'Alan Prueba',
+      video: {
+        room: 'class-1',
+        roomJoin: true,
+        canPublish: true,
+        canSubscribe: true,
+        canPublishData: false,
+        roomAdmin: true,
+      },
+    });
+    expect(Number(claims.exp) - Number(claims.iat)).toBe(4 * 60 * 60);
+  });
+
+  it('gives a Student no room administration', async () => {
+    const token = await new LiveKitTokenIssuer(jwt, config).issue({ ...grant, canModerate: false });
+
+    expect(jwt.decode<{ video: { roomAdmin: boolean } }>(token).video.roomAdmin).toBe(false);
+  });
+
+  it('is unavailable when no video server is configured', async () => {
+    await expect(new LiveKitTokenIssuer(jwt, null).issue(grant)).rejects.toBeInstanceOf(
+      VideoUnavailableException,
+    );
+  });
+});
