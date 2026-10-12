@@ -8,7 +8,9 @@ import {
 } from '../../../shared/presentation/decorators/auth.decorators.js';
 import {
   IssueClassroomTokenUseCase,
+  ListCourseSessionsUseCase,
   ListMyCoursesUseCase,
+  RecordHeldClassUseCase,
   StartClassSessionUseCase,
   type ClassroomAccess,
 } from '../application/use-cases/classroom.use-cases.js';
@@ -16,8 +18,8 @@ import {
   GetSessionAttendanceUseCase,
   RecordAttendanceByHandUseCase,
 } from '../application/use-cases/attendance.use-cases.js';
-import type { AttendanceSheet, ClassroomCourse } from '../domain/classroom.js';
-import { RecordAttendanceDto } from './classroom.dtos.js';
+import type { AttendanceSheet, ClassroomCourse, CourseSessions } from '../domain/classroom.js';
+import { RecordAttendanceDto, RecordHeldClassDto } from './classroom.dtos.js';
 
 /** Live classes of the institution in the `x-institution-id` header, for the members who give or attend them. */
 @Controller()
@@ -26,6 +28,8 @@ export class ClassroomController {
     @Inject(ListMyCoursesUseCase) private readonly listCourses: ListMyCoursesUseCase,
     @Inject(StartClassSessionUseCase) private readonly startSession: StartClassSessionUseCase,
     @Inject(IssueClassroomTokenUseCase) private readonly issueToken: IssueClassroomTokenUseCase,
+    @Inject(ListCourseSessionsUseCase) private readonly listSessions: ListCourseSessionsUseCase,
+    @Inject(RecordHeldClassUseCase) private readonly recordHeldClass: RecordHeldClassUseCase,
     @Inject(GetSessionAttendanceUseCase) private readonly sessionAttendance: GetSessionAttendanceUseCase,
     @Inject(RecordAttendanceByHandUseCase) private readonly recordAttendance: RecordAttendanceByHandUseCase,
   ) {}
@@ -53,6 +57,34 @@ export class ClassroomController {
       groupId,
       subjectId,
     });
+  }
+
+  /** The classes a course has had, for the Teacher who takes their attendance. */
+  @Get('groups/:groupId/courses/:subjectId/sessions')
+  @Roles(Role.TEACHER)
+  sessions(
+    @CurrentInstitutionId() institutionId: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('groupId', ParseUUIDPipe) groupId: string,
+    @Param('subjectId', ParseUUIDPipe) subjectId: string,
+  ): Promise<CourseSessions> {
+    return this.listSessions.execute({ institutionId, memberships: user.memberships, groupId, subjectId });
+  }
+
+  /** A class given without video, recorded so its attendance can be taken by hand. */
+  @Post('groups/:groupId/courses/:subjectId/sessions/held')
+  @Roles(Role.TEACHER)
+  held(
+    @CurrentInstitutionId() institutionId: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('groupId', ParseUUIDPipe) groupId: string,
+    @Param('subjectId', ParseUUIDPipe) subjectId: string,
+    @Body() dto: RecordHeldClassDto,
+  ): Promise<{ sessionId: string }> {
+    return this.recordHeldClass.execute(
+      { institutionId, memberships: user.memberships, groupId, subjectId },
+      dto.startsAt,
+    );
   }
 
   @Post('class-sessions/:sessionId/token')

@@ -246,6 +246,10 @@ describe('Guardians (HTTP)', () => {
     expect((await as(adminToken).get('/members/search?role=GUARDIAN&query=gra').expect(200)).body).toEqual([]);
     expect((await as(adminToken).get('/members/search?role=STUDENT&query=g').expect(200)).body).toEqual([]);
 
+    // A picker that needs an active member says so
+    expect((await as(adminToken).get('/members/search?role=STUDENT&query=gra&active=true').expect(200)).body).toHaveLength(1);
+    await as(adminToken).get('/members/search?role=STUDENT&query=gra&active=maybe').expect(400);
+
     await as(adminToken).get('/members/search?query=gra').expect(400);
     await as(adminToken).get('/members/search?role=PIRATE&query=gra').expect(400);
     await as(alan.token).get('/members/search?role=STUDENT&query=gra').expect(403);
@@ -325,6 +329,44 @@ describe('Guardians (HTTP)', () => {
     expect(stranger.status).toBe(400);
     expect(stranger.body.code).toBe('STUDENT_NOT_IN_CLASS');
     await teacher.put('/class-sessions/0199d0b4-0000-7000-8000-000000000000/attendance').send(absent).expect(404);
+  });
+
+  it('lets a Teacher record a class given without video and take its attendance', async () => {
+    const { alan, grace, gina, coursePath } = await seed();
+    const emmy = await member(Role.TEACHER, 'Emmy');
+    await link(grace.membershipId, gina.membershipId).expect(200);
+    const teacher = as(alan.token);
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+    expect((await teacher.get(`${coursePath}/sessions`).expect(200)).body.sessions).toEqual([]);
+    const held = await teacher.post(`${coursePath}/sessions/held`).send({ startsAt: yesterday }).expect(201);
+    const { sessionId } = held.body as { sessionId: string };
+    await teacher
+      .put(`/class-sessions/${sessionId}/attendance`)
+      .send({ marks: [{ enrollmentId: grace.membershipId, status: 'LATE' }] })
+      .expect(200);
+
+    const listed = await teacher.get(`${coursePath}/sessions`).expect(200);
+    expect(listed.body).toMatchObject({
+      groupName: '1ro A',
+      sessions: [{ id: sessionId, startsAt: yesterday, status: 'COMPLETED', marked: 1 }],
+    });
+    // The class is over: it has no room to enter
+    await teacher.post(`/class-sessions/${sessionId}/token`).expect(409);
+    const notices = (await as(gina.token, null).get('/notifications').expect(200)).body.items as Array<{ type: string }>;
+    expect(notices.map((notice) => notice.type)).toEqual(['WARD_ATTENDANCE']);
+
+    const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const early = await teacher.post(`${coursePath}/sessions/held`).send({ startsAt: tomorrow }).expect(400);
+    expect(early.body.code).toBe('CLASS_NOT_HELD_YET');
+    await teacher.post(`${coursePath}/sessions/held`).send({ startsAt: 'ayer' }).expect(400);
+    await teacher.post(`${coursePath}/sessions/held`).send({}).expect(400);
+    // Only the Teacher of the course, in its own institution
+    await as(emmy.token).get(`${coursePath}/sessions`).expect(403);
+    await as(emmy.token).post(`${coursePath}/sessions/held`).send({ startsAt: yesterday }).expect(403);
+    await as(gina.token).get(`${coursePath}/sessions`).expect(403);
+    await as(adminToken).get(`${coursePath}/sessions`).expect(403);
+    await as(alan.token, otherInstitutionId).get(`${coursePath}/sessions`).expect(403);
   });
 
   it('lists the members of an institution a page at a time, for the office only', async () => {

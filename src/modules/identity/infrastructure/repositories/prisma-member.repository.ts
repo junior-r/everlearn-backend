@@ -154,13 +154,20 @@ export class PrismaMemberRepository implements MemberRepository {
     });
   }
 
-  search(institutionId: string, role: Role, terms: string[], limit: number): Promise<MemberMatch[]> {
+  search(
+    institutionId: string,
+    role: Role,
+    terms: string[],
+    limit: number,
+    activeOnly: boolean,
+  ): Promise<MemberMatch[]> {
     return runQuery(this.logger, async () => {
       const contains = (term: string) => ({ contains: term, mode: 'insensitive' as const });
       const rows = await this.prisma.membership.findMany({
         where: {
           institutionId,
           role,
+          ...(activeOnly ? { isActive: true, user: { status: 'ACTIVE' as const } } : {}),
           AND: terms.map((term) => ({
             user: {
               OR: [

@@ -36,6 +36,27 @@ export interface ClassroomCourse {
 export interface TeachableCourse {
   courseId: string;
   teacherMembershipId: string | null;
+  subjectName: string;
+  groupName: string;
+}
+
+/** How many of a course's classes its Teacher is shown, most recent first. */
+export const MAX_LISTED_SESSIONS = 60;
+
+/** One class of a course, as the Teacher who takes its attendance sees it. */
+export interface CourseSession {
+  id: string;
+  startsAt: Date;
+  status: SessionStatus;
+  /** Students who already have a mark for this class. */
+  marked: number;
+}
+
+/** The classes a course has had, with what the course is. */
+export interface CourseSessions {
+  subjectName: string;
+  groupName: string;
+  sessions: CourseSession[];
 }
 
 /** What deciding who may enter a class session requires. */
@@ -221,6 +242,12 @@ export class VideoUnavailableException extends DomainException {
 export class InvalidSessionEventException extends DomainException {
   constructor(message: string) {
     super('VALIDATION', 'INVALID_SESSION_EVENT', message);
+  }
+}
+
+export class ClassNotHeldYetException extends DomainException {
+  constructor() {
+    super('VALIDATION', 'CLASS_NOT_HELD_YET', 'A class can only be recorded once it has been held');
   }
 }
 

@@ -10,7 +10,9 @@ import { NOTIFIER } from '../../shared/domain/notifications/notifier.js';
 import { useCaseProvider } from '../../shared/infrastructure/nest/use-case.provider.js';
 import {
   IssueClassroomTokenUseCase,
+  ListCourseSessionsUseCase,
   ListMyCoursesUseCase,
+  RecordHeldClassUseCase,
   StartClassSessionUseCase,
 } from './application/use-cases/classroom.use-cases.js';
 import {
@@ -49,6 +51,8 @@ import { InternalClassroomController } from './presentation/internal-classroom.c
     useCaseProvider(ListMyCoursesUseCase, [CLASSROOM_REPOSITORY]),
     useCaseProvider(IssueClassroomTokenUseCase, [CLASSROOM_REPOSITORY, VIDEO_TOKEN_ISSUER]),
     useCaseProvider(StartClassSessionUseCase, [CLASSROOM_REPOSITORY]),
+    useCaseProvider(ListCourseSessionsUseCase, [CLASSROOM_REPOSITORY]),
+    useCaseProvider(RecordHeldClassUseCase, [CLASSROOM_REPOSITORY]),
     useCaseProvider(RecordRoomLifecycleUseCase, [SESSION_RECORDER, NOTIFIER]),
     useCaseProvider(GetSessionAttendanceUseCase, [ATTENDANCE_BOOK]),
     useCaseProvider(RecordAttendanceByHandUseCase, [ATTENDANCE_BOOK, NOTIFIER]),

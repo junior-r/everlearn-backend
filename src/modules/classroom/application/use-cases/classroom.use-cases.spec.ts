@@ -14,6 +14,7 @@ import {
 import type { MembershipClaim } from '../../../../shared/domain/auth/authenticated-user.js';
 import { Role } from '../../../../shared/domain/auth/role.js';
 import {
+  ClassNotHeldYetException,
   ClassSessionClosedException,
   ClassSessionNotFoundException,
   CourseNotFoundException,
@@ -29,7 +30,9 @@ import { LiveKitTokenIssuer } from '../../infrastructure/livekit-token-issuer.js
 import { GetSessionAttendanceUseCase, RecordAttendanceByHandUseCase } from './attendance.use-cases.js';
 import {
   IssueClassroomTokenUseCase,
+  ListCourseSessionsUseCase,
   ListMyCoursesUseCase,
+  RecordHeldClassUseCase,
   StartClassSessionUseCase,
 } from './classroom.use-cases.js';
 import {
@@ -91,6 +94,8 @@ function setup() {
     start,
     open,
     list: new ListMyCoursesUseCase(classroom),
+    sessions: new ListCourseSessionsUseCase(classroom),
+    held: new RecordHeldClassUseCase(classroom),
     issue: new IssueClassroomTokenUseCase(classroom, tokens),
     lifecycle: new RecordRoomLifecycleUseCase(classroom, notifier),
     sheet: new GetSessionAttendanceUseCase(classroom),
@@ -610,5 +615,70 @@ describe('attendance taken by hand', () => {
 
     expect(ctx.classroom.attendance.size).toBe(0);
     expect(ctx.notifier.requests).toEqual([]);
+  });
+});
+
+describe('the classes of a course', () => {
+  const course = (ctx: ReturnType<typeof setup>, claim: MembershipClaim, institutionId = A) => ({
+    institutionId,
+    memberships: [claim],
+    groupId: ctx.groupId,
+    subjectId: MATH,
+  });
+
+  it('records a class given without video as already over, so nobody can enter it', async () => {
+    const ctx = setup();
+
+    const { sessionId } = await ctx.held.execute(course(ctx, ctx.alan), at(0), at(30));
+
+    expect(ctx.classroom.sessions).toEqual([
+      expect.objectContaining({ id: sessionId, status: SessionStatus.COMPLETED, startsAt: at(0), endsAt: at(60) }),
+    ]);
+    await expect(ctx.issue.execute(A, [ctx.alan], sessionId)).rejects.toBeInstanceOf(ClassSessionClosedException);
+    // It does not stand in the way of a live class
+    expect(await ctx.open()).not.toBe(sessionId);
+  });
+
+  it('refuses a class that has not been held yet', async () => {
+    const ctx = setup();
+
+    await expect(ctx.held.execute(course(ctx, ctx.alan), at(31), at(30))).rejects.toBeInstanceOf(
+      ClassNotHeldYetException,
+    );
+    expect(ctx.classroom.sessions).toEqual([]);
+  });
+
+  it('lists the classes most recent first, with how many Students each has marked', async () => {
+    const ctx = setup();
+    const first = (await ctx.held.execute(course(ctx, ctx.alan), at(0), at(50))).sessionId;
+    const second = (await ctx.held.execute(course(ctx, ctx.alan), at(20), at(50))).sessionId;
+    await ctx.byHand.execute({ institutionId: A, memberships: [ctx.alan] }, first, [
+      { enrollmentId: ctx.grace.id, status: 'LATE', note: null },
+    ]);
+
+    expect(await ctx.sessions.execute(course(ctx, ctx.alan))).toEqual({
+      subjectName: MATH,
+      groupName: '1ro A',
+      sessions: [
+        { id: second, startsAt: at(20), status: SessionStatus.COMPLETED, marked: 0 },
+        { id: first, startsAt: at(0), status: SessionStatus.COMPLETED, marked: 1 },
+      ],
+    });
+  });
+
+  it('is only for the Teacher assigned to the course, in its own institution', async () => {
+    const ctx = setup();
+
+    for (const useCase of [
+      () => ctx.sessions.execute(course(ctx, ctx.emmy)),
+      () => ctx.held.execute(course(ctx, ctx.emmy), at(0), at(30)),
+      () => ctx.sessions.execute(course(ctx, ctx.grace)),
+    ]) {
+      await expect(useCase()).rejects.toBeInstanceOf(NotCourseTeacherException);
+    }
+    await expect(ctx.sessions.execute(course(ctx, ctx.alan, B))).rejects.toBeInstanceOf(CourseNotFoundException);
+    await expect(ctx.held.execute(course(ctx, ctx.alan, B), at(0), at(30))).rejects.toBeInstanceOf(
+      CourseNotFoundException,
+    );
   });
 });

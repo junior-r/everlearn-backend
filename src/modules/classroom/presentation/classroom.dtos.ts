@@ -108,6 +108,12 @@ export class AttendanceMarkDto {
   note?: string;
 }
 
+export class RecordHeldClassDto {
+  @Type(() => Date)
+  @IsDate()
+  startsAt: Date;
+}
+
 export class RecordAttendanceDto {
   @IsArray()
   @ArrayMinSize(1)

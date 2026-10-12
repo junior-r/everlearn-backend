@@ -28,6 +28,11 @@ export class SearchMembersDto {
   @IsString()
   @MaxLength(100)
   query: string;
+
+  /** `true` leaves out members who cannot be chosen yet: pending onboarding or deactivated. */
+  @IsOptional()
+  @IsIn(['true', 'false'])
+  active?: 'true' | 'false';
 }
 
 export class PageMembersDto {

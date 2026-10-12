@@ -42,7 +42,14 @@ export interface MemberRepository {
   ): Promise<{ items: Member[]; total: number }>;
   /**
    * The first `limit` members holding `role` whose name or document number
-   * contains every term, ignoring case, by last name.
+   * contains every term, ignoring case, by last name. `activeOnly` leaves out
+   * whoever has not finished onboarding or was deactivated.
    */
-  search(institutionId: string, role: Role, terms: string[], limit: number): Promise<MemberMatch[]>;
+  search(
+    institutionId: string,
+    role: Role,
+    terms: string[],
+    limit: number,
+    activeOnly: boolean,
+  ): Promise<MemberMatch[]>;
 }

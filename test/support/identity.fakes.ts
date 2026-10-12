@@ -203,10 +203,17 @@ export class InMemoryMemberRepository implements MemberRepository {
     );
   }
 
-  search(institutionId: string, role: Role, terms: string[], limit: number): Promise<MemberMatch[]> {
+  search(
+    institutionId: string,
+    role: Role,
+    terms: string[],
+    limit: number,
+    activeOnly: boolean,
+  ): Promise<MemberMatch[]> {
     const matches = this.members
       .filter((member) => member.institutionId === institutionId && member.role === role)
       .map((member) => ({ ...this.toMember(member), documentNumber: this.documentNumbers.get(member.userId) ?? null }))
+      .filter((member) => !activeOnly || (member.isActive && member.status === UserStatus.ACTIVE))
       .filter((member) =>
         terms.every((term) =>
           [member.firstName, member.lastName, member.documentNumber ?? ''].some((value) =>

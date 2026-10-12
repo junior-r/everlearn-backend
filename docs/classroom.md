@@ -34,11 +34,13 @@ Only the Teacher assigned to a subject and the Students enrolled in its group ge
 - A mark taken by hand is stored as `MANUAL` with who took it; automatic attendance never overwrites it, and it may be taken while the class is open or after it.
 - `ABSENT` and `LATE` tell the Student's Guardians exactly as the automatic ones do (see `notifications-and-messaging.md`).
 - Port `AttendanceBook` (`PrismaAttendanceBook`); use cases in `application/use-cases/attendance.use-cases.ts`.
+- **`GET /groups/:groupId/courses/:subjectId/sessions`** (same Teacher) lists the course's latest 60 classes, most recent first, each with how many Students have a mark, for the Teacher to pick the roll to take.
+- **`POST /groups/:groupId/courses/:subjectId/sessions/held`** `{ startsAt }` records a class given without video: stored `COMPLETED` with no room, so nobody can enter it and the video-server never reports on it. A moment still to come is refused (`CLASS_NOT_HELD_YET`).
 
 ## Known gaps
 
-- Attendance by hand has no screen yet: the endpoint is ready and tested, and the Teacher's pages do not call it.
-
+- A course's list of classes stops at the latest 60; older ones cannot be reopened from the screen.
+- Nothing stops a Teacher recording two classes for the same moment, and a recorded class cannot be deleted.
 - Sessions are opened by hand and last a nominal 60 minutes; they are not generated from the timetable (`ScheduleSlot`).
 - Attendance measures connection time, not when the Student arrived: LATE means "attended part of the class".
 - A Teacher who stays alone in the room after the class keeps it open, which lowers every Student's share.

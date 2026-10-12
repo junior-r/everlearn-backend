@@ -9,6 +9,7 @@ import {
   type ManualAttendanceMark,
   type ChatMessage,
   type ClassroomCourse,
+  type CourseSession,
   type Participation,
   type RollCall,
   type SessionAccess,
@@ -111,7 +112,14 @@ export class InMemoryClassroomRepository implements ClassroomRepository, Session
     );
     const teacherId = group?.teachers.get(subjectId);
     return Promise.resolve(
-      teacherId ? { courseId: courseKey(groupId, subjectId), teacherMembershipId: teacherId } : null,
+      teacherId
+        ? {
+            courseId: courseKey(groupId, subjectId),
+            teacherMembershipId: teacherId,
+            subjectName: subjectId,
+            groupName: group?.name ?? '',
+          }
+        : null,
     );
   }
 
@@ -135,6 +143,29 @@ export class InMemoryClassroomRepository implements ClassroomRepository, Session
     };
     this.sessions.push(session);
     return Promise.resolve(session.id);
+  }
+
+  async createHeldSession(courseId: string, startsAt: Date, endsAt: Date): Promise<string> {
+    const id = await this.createSession(courseId, startsAt, endsAt);
+    this.requireSession(id).status = SessionStatus.COMPLETED;
+    return id;
+  }
+
+  listSessions(courseId: string, limit: number): Promise<CourseSession[]> {
+    const marked = (sessionId: string) =>
+      [...this.attendance.keys()].filter((key) => key.startsWith(`${sessionId}:`)).length;
+    return Promise.resolve(
+      this.sessions
+        .filter((session) => courseKey(session.groupId, session.subjectId) === courseId)
+        .sort((a, b) => b.startsAt.getTime() - a.startsAt.getTime())
+        .slice(0, limit)
+        .map((session) => ({
+          id: session.id,
+          startsAt: session.actualStartedAt ?? session.startsAt,
+          status: session.status,
+          marked: marked(session.id),
+        })),
+    );
   }
 
   findSession(institutionId: string, sessionId: string): Promise<SessionAccess | null> {

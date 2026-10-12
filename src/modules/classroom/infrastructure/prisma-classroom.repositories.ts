@@ -15,6 +15,7 @@ import {
   type AttendanceMark,
   type ChatMessage,
   type ClassroomCourse,
+  type CourseSession,
   type Participation,
   type RollCall,
   type SessionAccess,
@@ -90,9 +91,21 @@ export class PrismaClassroomRepository implements ClassroomRepository {
     return runQuery(this.logger, async () => {
       const row = await this.prisma.course.findFirst({
         where: { groupId, group: { institutionId }, pensumSubject: { subjectId } },
-        select: { id: true, teacherId: true },
+        select: {
+          id: true,
+          teacherId: true,
+          group: { select: { name: true } },
+          pensumSubject: { select: { subject: { select: { name: true } } } },
+        },
       });
-      return row && { courseId: row.id, teacherMembershipId: row.teacherId };
+      return (
+        row && {
+          courseId: row.id,
+          teacherMembershipId: row.teacherId,
+          subjectName: row.pensumSubject.subject.name,
+          groupName: row.group.name,
+        }
+      );
     });
   }
 
@@ -116,6 +129,39 @@ export class PrismaClassroomRepository implements ClassroomRepository {
         return id;
       }),
     );
+  }
+
+  createHeldSession(courseId: string, startsAt: Date, endsAt: Date): Promise<string> {
+    return runQuery(this.logger, async () => {
+      // No room name: the class has no video, so the video-server will never report on it
+      const { id } = await this.prisma.classSession.create({
+        data: { courseId, startsAt, endsAt, status: SessionStatus.COMPLETED },
+      });
+      return id;
+    });
+  }
+
+  listSessions(courseId: string, limit: number): Promise<CourseSession[]> {
+    return runQuery(this.logger, async () => {
+      const rows = await this.prisma.classSession.findMany({
+        where: { courseId },
+        orderBy: [{ startsAt: 'desc' }, { id: 'desc' }],
+        take: limit,
+        select: {
+          id: true,
+          startsAt: true,
+          actualStartedAt: true,
+          status: true,
+          _count: { select: { attendance: true } },
+        },
+      });
+      return rows.map((row) => ({
+        id: row.id,
+        startsAt: row.actualStartedAt ?? row.startsAt,
+        status: row.status,
+        marked: row._count.attendance,
+      }));
+    });
   }
 
   findSession(institutionId: string, sessionId: string): Promise<SessionAccess | null> {

@@ -371,6 +371,18 @@ describe('SearchMembersUseCase', () => {
     expect(await names(Role.STUDENT, 'kelly')).toEqual([]);
   });
 
+  it('leaves out whoever cannot be chosen yet when only active members are asked for', async () => {
+    const { search, members, grace } = await school();
+    const active = () => search.execute(INSTITUTION, Role.STUDENT, 'gra', true);
+
+    // Both Students are still pending onboarding
+    expect(await active()).toEqual([]);
+    members.activate(grace.userId, { firstName: 'Grace', lastName: 'Hopper' });
+
+    expect((await active()).map((match) => match.membershipId)).toEqual([grace.membershipId]);
+    expect(await search.execute(INSTITUTION, Role.STUDENT, 'gra')).toHaveLength(2);
+  });
+
   it('finds a member by their document number and returns it, to tell namesakes apart', async () => {
     const { search, grace } = await school();
 

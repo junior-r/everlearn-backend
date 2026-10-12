@@ -4,6 +4,7 @@ import type {
   ChatMessage,
   ClassroomCourse,
   ClassroomRole,
+  CourseSession,
   ManualAttendanceMark,
   Participation,
   RollCall,
@@ -28,6 +29,10 @@ export interface ClassroomRepository {
   findCourse(institutionId: string, groupId: string, subjectId: string): Promise<TeachableCourse | null>;
   findOpenSessionId(courseId: string): Promise<string | null>;
   createSession(courseId: string, startsAt: Date, endsAt: Date): Promise<string>;
+  /** Stores a class that was given without video: already over, with no room to enter. */
+  createHeldSession(courseId: string, startsAt: Date, endsAt: Date): Promise<string>;
+  /** The latest `limit` classes of a course, most recent first. */
+  listSessions(courseId: string, limit: number): Promise<CourseSession[]>;
   /** Resolves to null unless the session belongs to the institution. */
   findSession(institutionId: string, sessionId: string): Promise<SessionAccess | null>;
   isEnrolled(groupId: string, studentMembershipId: string): Promise<boolean>;

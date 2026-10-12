@@ -124,11 +124,14 @@ export class PageMembersUseCase {
 export class SearchMembersUseCase {
   constructor(private readonly members: MemberRepository) {}
 
-  /** Finds members of an institution holding a role, by name or document number; a few at a time. */
-  execute(institutionId: string, role: Role, query: string): Promise<MemberMatch[]> {
+  /**
+   * Finds members of an institution holding a role, by name or document number;
+   * a few at a time. `activeOnly` is for pickers whose choice must be an active member.
+   */
+  execute(institutionId: string, role: Role, query: string, activeOnly = false): Promise<MemberMatch[]> {
     const terms = searchTerms(query);
     return terms.length === 0
       ? Promise.resolve([])
-      : this.members.search(institutionId, role, terms, MEMBER_SEARCH_LIMIT);
+      : this.members.search(institutionId, role, terms, MEMBER_SEARCH_LIMIT, activeOnly);
   }
 }

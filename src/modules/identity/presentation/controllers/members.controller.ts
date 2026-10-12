@@ -44,7 +44,7 @@ export class MembersController {
   /** A few members holding a role, by name or document number: what a picker needs, however large the institution. */
   @Get('search')
   search(@CurrentInstitutionId() institutionId: string, @Query() dto: SearchMembersDto): Promise<MemberMatch[]> {
-    return this.searchMembers.execute(institutionId, dto.role, dto.query);
+    return this.searchMembers.execute(institutionId, dto.role, dto.query, dto.active === 'true');
   }
 
   @Post()

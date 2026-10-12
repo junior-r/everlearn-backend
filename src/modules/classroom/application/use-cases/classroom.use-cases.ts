@@ -1,16 +1,20 @@
 import type { MembershipClaim } from '../../../../shared/domain/auth/authenticated-user.js';
 import {
+  ClassNotHeldYetException,
   ClassroomRole,
   ClassSessionClosedException,
   ClassSessionNotFoundException,
   CourseNotFoundException,
   DEFAULT_SESSION_MINUTES,
   isOpen,
+  MAX_LISTED_SESSIONS,
   NotClassParticipantException,
   NotCourseTeacherException,
   roomNameFor,
   type ClassroomCourse,
+  type CourseSessions,
   type SessionAccess,
+  type TeachableCourse,
 } from '../../domain/classroom.js';
 import type { ClassroomRepository, VideoTokenIssuer } from '../../domain/ports/classroom.ports.js';
 
@@ -47,6 +51,21 @@ export interface StartClassSessionInput {
   subjectId: string;
 }
 
+/** The course of a group's subject, for the Teacher assigned to it and nobody else. */
+async function courseTaughtBy(classroom: ClassroomRepository, input: StartClassSessionInput): Promise<TeachableCourse> {
+  const course = await classroom.findCourse(input.institutionId, input.groupId, input.subjectId);
+  if (!course) {
+    throw new CourseNotFoundException();
+  }
+  const teaches = classroomMemberships(input.memberships, input.institutionId).some(
+    (membership) => membership.role === ClassroomRole.TEACHER && membership.id === course.teacherMembershipId,
+  );
+  if (!teaches) {
+    throw new NotCourseTeacherException();
+  }
+  return course;
+}
+
 export class StartClassSessionUseCase {
   constructor(private readonly classroom: ClassroomRepository) {}
 
@@ -55,23 +74,44 @@ export class StartClassSessionUseCase {
    * Starting again while a class is open resolves to that same session.
    */
   async execute(input: StartClassSessionInput, now = new Date()): Promise<{ sessionId: string }> {
-    const course = await this.classroom.findCourse(input.institutionId, input.groupId, input.subjectId);
-    if (!course) {
-      throw new CourseNotFoundException();
-    }
-    const teaches = classroomMemberships(input.memberships, input.institutionId).some(
-      (membership) =>
-        membership.role === ClassroomRole.TEACHER && membership.id === course.teacherMembershipId,
-    );
-    if (!teaches) {
-      throw new NotCourseTeacherException();
-    }
+    const course = await courseTaughtBy(this.classroom, input);
     const open = await this.classroom.findOpenSessionId(course.courseId);
     if (open) {
       return { sessionId: open };
     }
     const endsAt = new Date(now.getTime() + DEFAULT_SESSION_MINUTES * MS_PER_MINUTE);
     return { sessionId: await this.classroom.createSession(course.courseId, now, endsAt) };
+  }
+}
+
+export class ListCourseSessionsUseCase {
+  constructor(private readonly classroom: ClassroomRepository) {}
+
+  /** The latest classes of a course, for its Teacher to take or correct their attendance. */
+  async execute(input: StartClassSessionInput): Promise<CourseSessions> {
+    const course = await courseTaughtBy(this.classroom, input);
+    return {
+      subjectName: course.subjectName,
+      groupName: course.groupName,
+      sessions: await this.classroom.listSessions(course.courseId, MAX_LISTED_SESSIONS),
+    };
+  }
+}
+
+export class RecordHeldClassUseCase {
+  constructor(private readonly classroom: ClassroomRepository) {}
+
+  /**
+   * Records a class its Teacher gave without video, so its attendance can be
+   * taken by hand. It is stored as already over: nobody can enter it.
+   */
+  async execute(input: StartClassSessionInput, startsAt: Date, now = new Date()): Promise<{ sessionId: string }> {
+    const course = await courseTaughtBy(this.classroom, input);
+    if (startsAt.getTime() > now.getTime()) {
+      throw new ClassNotHeldYetException();
+    }
+    const endsAt = new Date(startsAt.getTime() + DEFAULT_SESSION_MINUTES * MS_PER_MINUTE);
+    return { sessionId: await this.classroom.createHeldSession(course.courseId, startsAt, endsAt) };
   }
 }
 
