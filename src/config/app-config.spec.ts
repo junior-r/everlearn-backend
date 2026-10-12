@@ -60,3 +60,13 @@ describe('how emails are sent', () => {
     expect(() => email({ EMAIL_LOG_BODIES: 'si' })).toThrow('EMAIL_LOG_BODIES must be true or false');
   });
 });
+
+describe('reverse proxies', () => {
+  const proxies = (env: Record<string, string>) => loadAppConfig({ ...BASE, ...env }).trustedProxies;
+
+  it('trusts none unless told how many stand in front of the server', () => {
+    expect(proxies({})).toBe(0);
+    expect(proxies({ TRUSTED_PROXIES: '1' })).toBe(1);
+    expect(() => proxies({ TRUSTED_PROXIES: 'all' })).toThrow('TRUSTED_PROXIES must be a whole number, 0 or more');
+  });
+});

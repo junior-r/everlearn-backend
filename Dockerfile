@@ -22,5 +22,9 @@ ENV NODE_ENV=production
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile --prod
 COPY --from=build /app/dist ./dist
+# ID photos are written here; a volume mounted on it starts out owned by the same user
+RUN mkdir -p /app/uploads && chown node:node /app/uploads
+ENV UPLOADS_DIR=/app/uploads
+USER node
 EXPOSE 4000
 CMD ["node", "dist/main"]

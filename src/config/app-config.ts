@@ -24,6 +24,11 @@ export interface AppConfig {
   databaseUrl: string;
   redisUrl: string;
   frontendUrl: string;
+  /**
+   * Reverse proxies in front of the server whose `X-Forwarded-For` is believed.
+   * 0 (no proxy) ignores the header, so a caller cannot choose the address they are limited by.
+   */
+  trustedProxies: number;
   uploadsDir: string;
   jwt: JwtConfig;
   google: GoogleOAuthConfig | null;
@@ -220,6 +225,7 @@ export function loadAppConfig(env: Env): AppConfig {
     databaseUrl: required(env, 'DATABASE_URL'),
     redisUrl: env.REDIS_URL ?? 'redis://localhost:6379',
     frontendUrl: env.FRONTEND_URL ?? 'http://localhost:3000',
+    trustedProxies: nonNegativeInt(env, 'TRUSTED_PROXIES', 0),
     uploadsDir: env.UPLOADS_DIR ?? './uploads',
     jwt: {
       accessSecret: secret(env, 'JWT_ACCESS_SECRET'),
