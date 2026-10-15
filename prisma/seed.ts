@@ -194,9 +194,10 @@ async function main(): Promise<void> {
       },
     });
   }
-  await evaluation(math.id, { title: 'Examen parcial', type: 'EXAM', weight: 40, dueInDays: -10, isPublished: true }, [18, 11]);
+  // Maths leaves 20% unplanned, so the demo Teacher can add an evaluation
+  await evaluation(math.id, { title: 'Examen parcial', type: 'EXAM', weight: 30, dueInDays: -10, isPublished: true }, [18, 11]);
   await evaluation(math.id, { title: 'Taller de álgebra', type: 'ASSIGNMENT', weight: 20, dueInDays: -4, isPublished: true }, [16, 9]);
-  await evaluation(math.id, { title: 'Proyecto final', type: 'PROJECT', weight: 40, dueInDays: 10, isPublished: true }, null);
+  await evaluation(math.id, { title: 'Proyecto final', type: 'PROJECT', weight: 30, dueInDays: 10, isPublished: true }, null);
   await evaluation(physics.id, { title: 'Quiz de cinemática', type: 'QUIZ', weight: 30, dueInDays: -5, isPublished: true }, [15, 13]);
   await evaluation(physics.id, { title: 'Informe de laboratorio', type: 'ASSIGNMENT', weight: 30, dueInDays: 14, isPublished: false }, null);
 

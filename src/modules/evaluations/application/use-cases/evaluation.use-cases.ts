@@ -2,6 +2,7 @@ import type { MembershipClaim } from '../../../../shared/domain/auth/authenticat
 import { NotificationType, type Notifier } from '../../../../shared/domain/notifications/notifier.js';
 import { Role } from '../../../../shared/domain/auth/role.js';
 import {
+  availableWeight,
   CourseNotFoundException,
   EvaluationAlreadyPublishedException,
   EvaluationHasGradesException,
@@ -284,6 +285,8 @@ export interface Gradebook {
   /** Drafts included: the Teacher manages them here, but only published ones can be graded. */
   evaluations: Evaluation[];
   totalWeight: number;
+  /** What is left of the 100% for new evaluations; zero when the course is full. */
+  availableWeight: number;
   students: GradebookRow[];
 }
 
@@ -305,6 +308,7 @@ export class GetGradebookUseCase {
       subject: course.subject,
       evaluations,
       totalWeight: totalWeight(evaluations),
+      availableWeight: availableWeight(evaluations),
       students: students.map((student) => {
         const own = grades.filter((grade) => grade.enrollmentId === student.enrollmentId);
         const scores = new Map(own.map((grade) => [grade.evaluationId, grade.score]));

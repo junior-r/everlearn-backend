@@ -381,7 +381,7 @@ describe('the gradebook', () => {
 
     const book = await ctx.gradebook.execute(ctx.alan.actor, ctx.math);
 
-    expect(book).toMatchObject({ groupName: '1ro A', totalWeight: 100 });
+    expect(book).toMatchObject({ groupName: '1ro A', totalWeight: 100, availableWeight: 0 });
     expect(book.evaluations.map((evaluation) => evaluation.isPublished)).toEqual([true, true, false]);
     expect(book.students).toEqual([
       expect.objectContaining({ firstName: 'Grace', average: 81.25, gradedWeight: 80 }),

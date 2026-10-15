@@ -88,6 +88,11 @@ export function totalWeight(evaluations: ReadonlyArray<{ weight: number }>): num
   return evaluations.reduce((sum, evaluation) => sum + toHundredths(evaluation.weight), 0) / 100;
 }
 
+/** How much weight is left for new evaluations in a course, in percent; never below zero. */
+export function availableWeight(evaluations: ReadonlyArray<{ weight: number }>): number {
+  return Math.max(0, toHundredths(MAX_TOTAL_WEIGHT) - toHundredths(totalWeight(evaluations))) / 100;
+}
+
 /** Whether an evaluation worth `weight` fits beside the others of its course. */
 export function fitsWeight(others: ReadonlyArray<{ weight: number }>, weight: number): boolean {
   return toHundredths(totalWeight(others)) + toHundredths(weight) <= toHundredths(MAX_TOTAL_WEIGHT);

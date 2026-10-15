@@ -22,7 +22,7 @@ A Teacher manages the evaluations of their own courses and enters scores; a Stud
 - **Rules** live in `domain/evaluation.ts` as pure functions: `totalWeight`, `fitsWeight`, `standingOf`.
   - `average = Σ(score / maxScore × weight) / Σ(weight)` over published evaluations with a score, as a percentage rounded to two decimals; `null` while nothing is graded.
 - **Teacher endpoints** (institution from `x-institution-id`, role `TEACHER`, assigned to the course or `NOT_COURSE_TEACHER`):
-  - `GET /groups/:groupId/courses/:subjectId/gradebook`: every evaluation (drafts included), `totalWeight`, and each enrolled Student with `grades`, `average`, `gradedWeight`.
+  - `GET /groups/:groupId/courses/:subjectId/gradebook`: every evaluation (drafts included), `totalWeight`, `availableWeight` (what is left of the 100% for new evaluations, never below 0), and each enrolled Student with `grades`, `average`, `gradedWeight`.
   - `POST /groups/:groupId/courses/:subjectId/evaluations`: creates a draft `{ title, type, weight, maxScore, dueAt? }`.
   - `PATCH /evaluations/:id`: changes what is sent; `dueAt: null` removes the date. `maxScore` cannot change once grades exist (`EVALUATION_HAS_GRADES`).
   - `POST /evaluations/:id/publish`.
