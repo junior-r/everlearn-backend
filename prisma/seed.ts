@@ -1,6 +1,8 @@
 import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
 import bcrypt from 'bcrypt';
+import { BUILT_IN_EXERCISES } from '../src/modules/labs/domain/built-in-exercises.js';
+import { LAB_CATALOG } from '../src/modules/labs/domain/lab-catalog.js';
 import { PrismaClient } from '../src/shared/infrastructure/prisma/generated/client.js';
 
 /**
@@ -119,8 +121,8 @@ async function main(): Promise<void> {
     })),
   });
 
-  /** A subject of the pensum given to the group by the Teacher, on two mornings a week. */
-  async function course(code: string, name: string, weeklyHours: number, days: ['MONDAY', 'WEDNESDAY'] | ['TUESDAY', 'THURSDAY']) {
+  /** A subject of the pensum given to the group by the Teacher, on the mornings given. */
+  async function course(code: string, name: string, weeklyHours: number, days: Array<'MONDAY' | 'TUESDAY' | 'WEDNESDAY' | 'THURSDAY' | 'FRIDAY'>) {
     const subject = await prisma.subject.create({ data: { institutionId: institution.id, code, name } });
     const pensumSubject = await prisma.pensumSubject.create({
       data: { pensumId: pensum.id, subjectId: subject.id, level: 1, weeklyHours },
@@ -138,6 +140,7 @@ async function main(): Promise<void> {
   }
   const math = await course('MAT-1', 'Matemática', 4, ['MONDAY', 'WEDNESDAY']);
   const physics = await course('FIS-1', 'Física', 3, ['TUESDAY', 'THURSDAY']);
+  const language = await course('LEN-1', 'Lengua', 2, ['FRIDAY']);
 
   /** A class already given, with the roll the Teacher took: [Grace, Linus]. */
   async function heldClass(courseId: string, daysAgo: number, marks: [Status, Status]): Promise<void> {
@@ -200,7 +203,36 @@ async function main(): Promise<void> {
   await evaluation(physics.id, { title: 'Quiz de cinemática', type: 'QUIZ', weight: 30, dueInDays: -5, isPublished: true }, [15, 13]);
   await evaluation(physics.id, { title: 'Informe de laboratorio', type: 'ASSIGNMENT', weight: 30, dueInDays: 14, isPublished: false }, null);
 
-  console.log(`\nSeeded "${institution.name}": group 1ro A, 2 subjects, 6 classes, 5 evaluations.\n`);
+  // Labs: every lab granted and on, the exercise bank (truncated with the institutions) written back, two activities
+  await prisma.institutionLab.createMany({
+    data: LAB_CATALOG.map((lab) => ({ institutionId: institution.id, labKey: lab.key })),
+  });
+  for (const { id, labKey, prompt, answers, hint } of BUILT_IN_EXERCISES) {
+    await prisma.languageExercise.create({ data: { id, labKey, prompt, answers, hint } });
+  }
+  await prisma.labAssignment.create({
+    data: {
+      courseId: physics.id,
+      createdById: teacherId,
+      labKey: 'gravity',
+      title: 'Caída libre en otros planetas',
+      instructions: 'Deja caer el objeto desde 20 m en la Tierra, la Luna y Marte, y anota cuánto tarda en cada uno.',
+      dueAt: dayAt(5, 16),
+    },
+  });
+  const verbs = BUILT_IN_EXERCISES.filter((exercise) => exercise.labKey === 'completions').slice(0, 5);
+  await prisma.labAssignment.create({
+    data: {
+      courseId: language.id,
+      createdById: teacherId,
+      labKey: 'completions',
+      title: 'Repaso de verbos',
+      dueAt: dayAt(3, 16),
+      exercises: { create: verbs.map((exercise, position) => ({ exerciseId: exercise.id, position })) },
+    },
+  });
+
+  console.log(`\nSeeded "${institution.name}": group 1ro A, 3 subjects, 6 classes, 5 evaluations, every lab and 2 lab activities.\n`);
   console.log(`Every account below signs in with the password: ${PASSWORD}\n`);
   console.table(accounts.map(({ label, email, first, last }) => ({ role: label, email, name: `${first} ${last}` })));
   console.log('\nThe Platform Admin was left as it was (PLATFORM_ADMIN_EMAIL / PLATFORM_ADMIN_PASSWORD).');

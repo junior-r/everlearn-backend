@@ -8,6 +8,7 @@ import { ClassroomModule } from './modules/classroom/classroom.module.js';
 import { EvaluationsModule } from './modules/evaluations/evaluations.module.js';
 import { GuardiansModule } from './modules/guardians/guardians.module.js';
 import { IdentityModule } from './modules/identity/identity.module.js';
+import { LabsModule } from './modules/labs/labs.module.js';
 import { InstitutionsModule } from './modules/institutions/institutions.module.js';
 import { MessagingModule } from './modules/messaging/messaging.module.js';
 import { NotificationsModule } from './modules/notifications/notifications.module.js';
@@ -37,6 +38,7 @@ import { DomainExceptionFilter } from './shared/presentation/filters/domain-exce
     MessagingModule,
     GuardiansModule,
     OnboardingModule,
+    LabsModule,
   ],
   controllers: [HealthController],
   providers: [

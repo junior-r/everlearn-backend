@@ -28,8 +28,12 @@ export class LiveKitTokenIssuer implements VideoTokenIssuer {
       // Chat and captions reach the room through the video-server, never straight from a browser
       canPublishData: false,
     };
-    // Seen by the room and read by the video-server, which is the only one that moderates
-    const attributes = { role: grant.canModerate ? ClassroomRole.TEACHER : ClassroomRole.STUDENT };
+    // Seen by the room and read by the video-server, which is the only one that moderates and shares labs
+    const attributes = {
+      role: grant.canModerate ? ClassroomRole.TEACHER : ClassroomRole.STUDENT,
+      // LiveKit attributes are strings: the keys are joined with commas
+      labs: grant.shareableLabs.join(','),
+    };
     return this.jwt.signAsync(
       { name: grant.displayName, video, attributes },
       {

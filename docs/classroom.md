@@ -14,6 +14,7 @@ Only the Teacher assigned to a subject and the Students enrolled in its group ge
 - **Tokens are signed with `@nestjs/jwt`, not the LiveKit SDK.** A LiveKit token is a plain HS256 JWT (`iss` = API key, `sub` = identity, a `video` claim); signing it ourselves adds no dependency. It sits behind the `VideoTokenIssuer` port.
 - **Browsers cannot publish data (`canPublishData: false`).** Chat and captions enter a room only through the video-server, so a participant cannot forge a message from someone else.
 - **No browser holds LiveKit's room administration.** The token says who the Teacher is with a signed attribute (`attributes.role`: `TEACHER` or `STUDENT`), which the video-server reads to decide who may moderate. A `roomAdmin` grant would have let the Teacher's browser call LiveKit directly, publishing data included.
+- **The labs a Teacher may share are signed too.** The Teacher's token carries `attributes.labs`: the keys of the labs the institution may use, comma separated (`AVAILABLE_LABS`, see `labs.md`); a Student's is empty. The video-server shares a lab with the room only if its key is listed there, so it never has to ask the backend.
 - **Internal endpoints are idempotent.** The video-server retries deliveries, so each write is an upsert keyed by what LiveKit or the video-server generated (`participantSid`, message id, segment id).
 - **A shared secret, not a user session, protects the internal API** (`InternalServiceOnly`, header `X-Internal-Secret`, compared in constant time). With no secret configured every call is refused.
 

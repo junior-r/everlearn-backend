@@ -6,6 +6,7 @@ import { PrismaAttendanceBook } from './infrastructure/prisma-attendance-book.js
 import { Module } from '@nestjs/common';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import { APP_CONFIG, type AppConfig } from '../../config/app-config.js';
+import { AVAILABLE_LABS } from '../../shared/domain/labs/available-labs.js';
 import { NOTIFIER } from '../../shared/domain/notifications/notifier.js';
 import { useCaseProvider } from '../../shared/infrastructure/nest/use-case.provider.js';
 import {
@@ -50,7 +51,7 @@ import { InternalClassroomController } from './presentation/internal-classroom.c
       inject: [JwtService, APP_CONFIG],
     },
     useCaseProvider(ListMyCoursesUseCase, [CLASSROOM_REPOSITORY]),
-    useCaseProvider(IssueClassroomTokenUseCase, [CLASSROOM_REPOSITORY, VIDEO_TOKEN_ISSUER]),
+    useCaseProvider(IssueClassroomTokenUseCase, [CLASSROOM_REPOSITORY, VIDEO_TOKEN_ISSUER, AVAILABLE_LABS]),
     useCaseProvider(StartClassSessionUseCase, [CLASSROOM_REPOSITORY]),
     useCaseProvider(ListCourseSessionsUseCase, [CLASSROOM_REPOSITORY]),
     useCaseProvider(RecordHeldClassUseCase, [CLASSROOM_REPOSITORY]),
