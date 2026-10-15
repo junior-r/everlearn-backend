@@ -20,6 +20,7 @@ import {
   RecordParticipationUseCase,
   RecordRoomLifecycleUseCase,
   RecordTranscriptSegmentUseCase,
+  RemoveChatMessageUseCase,
 } from './application/use-cases/session-recording.use-cases.js';
 import {
   ATTENDANCE_BOOK,
@@ -58,6 +59,7 @@ import { InternalClassroomController } from './presentation/internal-classroom.c
     useCaseProvider(RecordAttendanceByHandUseCase, [ATTENDANCE_BOOK, NOTIFIER]),
     useCaseProvider(RecordParticipationUseCase, [SESSION_RECORDER]),
     useCaseProvider(RecordChatMessageUseCase, [SESSION_RECORDER]),
+    useCaseProvider(RemoveChatMessageUseCase, [SESSION_RECORDER]),
     useCaseProvider(RecordTranscriptSegmentUseCase, [SESSION_RECORDER]),
   ],
 })

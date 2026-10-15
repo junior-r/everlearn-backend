@@ -8,6 +8,7 @@ import {
   type AttendanceStatus,
   type ManualAttendanceMark,
   type ChatMessage,
+  type ChatMessageRemoval,
   type ClassroomCourse,
   type CourseSession,
   type Participation,
@@ -57,6 +58,7 @@ export class InMemoryClassroomRepository implements ClassroomRepository, Session
   /** Keys whose attendance a person took by hand. */
   readonly manualAttendance = new Set<string>();
   readonly chatMessages: ChatMessage[] = [];
+  readonly removedChatMessages: ChatMessageRemoval[] = [];
   readonly transcriptSegments: TranscriptSegment[] = [];
 
   constructor(
@@ -327,6 +329,16 @@ export class InMemoryClassroomRepository implements ClassroomRepository, Session
     this.requireMember(message.senderId);
     if (!this.chatMessages.some((stored) => stored.id === message.id)) {
       this.chatMessages.push(message);
+    }
+  }
+
+  async removeChatMessage(removal: ChatMessageRemoval): Promise<void> {
+    this.requireSession(removal.sessionId);
+    const isStored = this.chatMessages.some(
+      (stored) => stored.id === removal.id && stored.sessionId === removal.sessionId,
+    );
+    if (isStored && !this.removedChatMessages.some((removed) => removed.id === removal.id)) {
+      this.removedChatMessages.push(removal);
     }
   }
 

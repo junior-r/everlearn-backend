@@ -2,6 +2,7 @@ import type {
   AttendanceMark,
   AttendanceSheet,
   ChatMessage,
+  ChatMessageRemoval,
   ClassroomCourse,
   ClassroomRole,
   CourseSession,
@@ -58,6 +59,8 @@ export interface SessionRecorder {
    */
   saveAttendance(sessionId: string, marks: AttendanceMark[]): Promise<AttendanceMark[]>;
   addChatMessage(message: ChatMessage): Promise<void>;
+  /** Marks a message of the session as taken down; a message that was never stored is left alone. */
+  removeChatMessage(removal: ChatMessageRemoval): Promise<void>;
   addTranscriptSegment(segment: TranscriptSegment): Promise<void>;
 }
 
@@ -66,6 +69,7 @@ export interface VideoGrant {
   /** Always the participant's Membership id. */
   identity: string;
   displayName: string;
+  /** True for the Teacher of the class: the video-server lets only them keep order in the room. */
   canModerate: boolean;
 }
 

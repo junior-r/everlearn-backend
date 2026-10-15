@@ -5,6 +5,7 @@ import {
   MAX_TRANSCRIPT_LENGTH,
   takeAttendance,
   type ChatMessage,
+  type ChatMessageRemoval,
   type Participation,
   type TranscriptSegment,
 } from '../../domain/classroom.js';
@@ -81,6 +82,15 @@ export class RecordChatMessageUseCase {
       ...message,
       content: cleanText(message.content, MAX_CHAT_LENGTH, 'A chat message'),
     });
+  }
+}
+
+export class RemoveChatMessageUseCase {
+  constructor(private readonly recorder: SessionRecorder) {}
+
+  /** Keeps the message as history but marks it taken down. The video-server already checked who may. */
+  execute(removal: ChatMessageRemoval): Promise<void> {
+    return this.recorder.removeChatMessage(removal);
   }
 }
 

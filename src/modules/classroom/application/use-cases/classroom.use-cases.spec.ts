@@ -37,6 +37,7 @@ import {
 } from './classroom.use-cases.js';
 import {
   RecordChatMessageUseCase,
+  RemoveChatMessageUseCase,
   RecordParticipationUseCase,
   RecordRoomLifecycleUseCase,
   RecordTranscriptSegmentUseCase,
@@ -102,6 +103,7 @@ function setup() {
     byHand: new RecordAttendanceByHandUseCase(classroom, notifier),
     participation: new RecordParticipationUseCase(classroom),
     chat: new RecordChatMessageUseCase(classroom),
+    chatRemoval: new RemoveChatMessageUseCase(classroom),
     transcript: new RecordTranscriptSegmentUseCase(classroom),
   };
 }
@@ -446,6 +448,25 @@ describe('recording a live class', () => {
     ).rejects.toBeInstanceOf(InvalidSessionEventException);
   });
 
+  it('marks a message taken down once, and leaves alone one it never stored', async () => {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+    const message = { id: randomUUID(), sessionId, senderId: ctx.grace.id, content: 'Hola', sentAt: at(3) };
+    const removal = { id: message.id, sessionId, deletedById: ctx.grace.id, deletedAt: at(4) };
+    await ctx.chat.execute(message);
+
+    await ctx.chatRemoval.execute(removal);
+    await ctx.chatRemoval.execute({ ...removal, deletedAt: at(9) });
+    await ctx.chatRemoval.execute({ ...removal, id: randomUUID() });
+
+    expect(ctx.classroom.removedChatMessages).toEqual([removal]);
+    // The message stays as history
+    expect(ctx.classroom.chatMessages).toHaveLength(1);
+    await expect(ctx.chatRemoval.execute({ ...removal, sessionId: randomUUID() })).rejects.toBeInstanceOf(
+      ClassSessionNotFoundException,
+    );
+  });
+
   it('stores transcript segments, with or without a speaker, and refuses one that ends before it starts', async () => {
     const ctx = setup();
     const sessionId = await ctx.open();
@@ -507,16 +528,20 @@ describe('LiveKit access tokens', () => {
         canPublish: true,
         canSubscribe: true,
         canPublishData: false,
-        roomAdmin: true,
       },
+      attributes: { role: 'TEACHER' },
     });
+    // Moderation goes through the video-server: no browser holds LiveKit's room administration
+    expect(claims.video).not.toHaveProperty('roomAdmin');
     expect(Number(claims.exp) - Number(claims.iat)).toBe(4 * 60 * 60);
   });
 
-  it('gives a Student no room administration', async () => {
+  it('signs a Student in as a Student, who moderates nothing', async () => {
     const token = await new LiveKitTokenIssuer(jwt, config).issue({ ...grant, canModerate: false });
 
-    expect(jwt.decode<{ video: { roomAdmin: boolean } }>(token).video.roomAdmin).toBe(false);
+    const claims = jwt.decode<{ video: object; attributes: { role: string } }>(token);
+    expect(claims.attributes).toEqual({ role: 'STUDENT' });
+    expect(claims.video).not.toHaveProperty('roomAdmin');
   });
 
   it('is unavailable when no video server is configured', async () => {

@@ -14,6 +14,7 @@ import {
   SessionStatus,
   type AttendanceMark,
   type ChatMessage,
+  type ChatMessageRemoval,
   type ClassroomCourse,
   type CourseSession,
   type Participation,
@@ -404,6 +405,16 @@ export class PrismaSessionRecorder implements SessionRecorder {
       },
       unknownReference,
     );
+  }
+
+  removeChatMessage({ id, sessionId, deletedById, deletedAt }: ChatMessageRemoval): Promise<void> {
+    return runQuery(this.logger, async () => {
+      await this.requireSession(sessionId);
+      await this.prisma.chatMessage.updateMany({
+        where: { id, sessionId, deletedAt: null },
+        data: { deletedAt, deletedById },
+      });
+    });
   }
 
   addTranscriptSegment(segment: TranscriptSegment): Promise<void> {

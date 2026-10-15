@@ -463,6 +463,9 @@ model ChatMessage {
   senderId  String   @db.Uuid
   content   String
   sentAt    DateTime
+  // Taken down during the class by its author or the Teacher; kept as history
+  deletedAt   DateTime?
+  deletedById String?   @db.Uuid
 
   session ClassSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   sender  Membership   @relation(fields: [senderId], references: [id])

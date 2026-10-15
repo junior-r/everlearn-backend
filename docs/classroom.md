@@ -13,6 +13,7 @@ Only the Teacher assigned to a subject and the Students enrolled in its group ge
 - **The backend issues the LiveKit token; the browser never holds the API secret.** The token names one room and one identity (the `Membership.id`), so LiveKit itself enforces what the backend decided.
 - **Tokens are signed with `@nestjs/jwt`, not the LiveKit SDK.** A LiveKit token is a plain HS256 JWT (`iss` = API key, `sub` = identity, a `video` claim); signing it ourselves adds no dependency. It sits behind the `VideoTokenIssuer` port.
 - **Browsers cannot publish data (`canPublishData: false`).** Chat and captions enter a room only through the video-server, so a participant cannot forge a message from someone else.
+- **No browser holds LiveKit's room administration.** The token says who the Teacher is with a signed attribute (`attributes.role`: `TEACHER` or `STUDENT`), which the video-server reads to decide who may moderate. A `roomAdmin` grant would have let the Teacher's browser call LiveKit directly, publishing data included.
 - **Internal endpoints are idempotent.** The video-server retries deliveries, so each write is an upsert keyed by what LiveKit or the video-server generated (`participantSid`, message id, segment id).
 - **A shared secret, not a user session, protects the internal API** (`InternalServiceOnly`, header `X-Internal-Secret`, compared in constant time). With no secret configured every call is refused.
 
@@ -22,7 +23,9 @@ Only the Teacher assigned to a subject and the Students enrolled in its group ge
   - `GET /classroom/courses` (Teacher, Student): the subjects the member teaches or attends, each with `openSessionId` when a class is in progress.
   - `POST /groups/:groupId/courses/:subjectId/sessions` (Teacher): opens a class, or returns the one already open. Only the assigned Teacher (`NOT_COURSE_TEACHER` otherwise).
   - `POST /class-sessions/:sessionId/token` (Teacher, Student): `{ token, roomName, identity, role, subjectName, groupName }`. `NOT_CLASS_PARTICIPANT` (403) for anyone else, `CLASS_SESSION_NOT_FOUND` (404) for another institution's session, `CLASS_SESSION_CLOSED` (409) once it ended.
-- **Internal endpoints** (`/internal/classroom/sessions/:sessionId/…`, all `204`): `started`, `finished`, `participants/joined`, `participants/left`, `chat-messages`, `transcript-segments`. An unknown session or member is `404`.
+- **Internal endpoints** (`/internal/classroom/sessions/:sessionId/…`, all `204`): `started`, `finished`, `participants/joined`, `participants/left`, `chat-messages`, `chat-messages/deleted`, `transcript-segments`. An unknown session or member is `404`.
+- **A chat message taken down** (`chat-messages/deleted`: `{ id, deletedById, deletedAt }`) stays stored, marked with when and by whom (`ChatMessage.deletedAt`, `deletedById`). The video-server has already checked that it was the author or the Teacher; a message that was never stored is left alone.
+- **Ending a class** is not a backend endpoint: the Teacher asks the video-server, the room closes, and the usual `finished` report closes the session and takes attendance.
 - **Session lifecycle:** `SCHEDULED` (opened by the Teacher) → `LIVE` (first participant, `started`) → `COMPLETED` (room closed, `finished`, which also closes connections still open). The room is named `class-<sessionId>`.
 - **Attendance:** each connection is a `SessionParticipation` row (`joinedAt`, `leftAt`); time in class is the sum of a member's rows. When the room finishes, every Student enrolled in the group gets an automatic `AttendanceRecord` from the share of the class they were connected: above 50% `PRESENT`, above 15% `LATE`, otherwise `ABSENT` (`takeAttendance` in `domain/classroom.ts`). The class runs from `actualStartedAt` to `actualEndedAt`; reconnections add up and overlapping connections count once. A record taken by hand is never overwritten. `peakParticipants` is the most connections open at once.
 - **A person with several memberships** in the institution enters with the one that takes part in the class.
@@ -45,5 +48,5 @@ Only the Teacher assigned to a subject and the Students enrolled in its group ge
 - Attendance measures connection time, not when the Student arrived: LATE means "attended part of the class".
 - A Teacher who stays alone in the room after the class keeps it open, which lowers every Student's share.
 - Two simultaneous "start class" requests for the same subject could open two sessions.
-- No endpoints yet to read a session's attendance, chat history or transcript.
+- No endpoints yet to read a session's attendance, chat history or transcript; whoever adds the chat one must leave out messages with `deletedAt`.
 - `speakingSeconds`, `cameraOnSeconds` and `screenShareSeconds` are not filled.
