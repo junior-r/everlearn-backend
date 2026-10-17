@@ -98,7 +98,7 @@ describe('Evaluations and grades (HTTP)', () => {
       .expect(204);
 
     const book = await teacher.get(`${coursePath}/gradebook`).expect(200);
-    expect(book.body).toMatchObject({ groupName: '1ro A', totalWeight: 60 });
+    expect(book.body).toMatchObject({ groupName: '1ro A', totalWeight: 60, availableWeight: 40 });
     expect(book.body.students).toEqual([
       expect.objectContaining({
         firstName: 'Grace',
