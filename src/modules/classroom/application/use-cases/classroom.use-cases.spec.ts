@@ -37,6 +37,7 @@ import {
 } from './classroom.use-cases.js';
 import {
   RecordChatMessageUseCase,
+  RemoveChatMessageUseCase,
   RecordParticipationUseCase,
   RecordRoomLifecycleUseCase,
   RecordTranscriptSegmentUseCase,
@@ -57,6 +58,8 @@ function setup() {
   );
   const classroom = new InMemoryClassroomRepository(groups, directory);
   const tokens = new FakeVideoTokenIssuer();
+  // Institution A may use two labs; the Teacher's token lists them, a Student's none
+  const labs = { keysFor: (institutionId: string) => Promise.resolve(institutionId === A ? ['gravity', 'completions'] : []) };
   const notifier = new RecordingNotifier();
   const claim = (institutionId: string, role: Role, firstName: string): MembershipClaim => ({
     id: directory.add(institutionId, role, firstName, 'Prueba').membershipId,
@@ -96,12 +99,13 @@ function setup() {
     list: new ListMyCoursesUseCase(classroom),
     sessions: new ListCourseSessionsUseCase(classroom),
     held: new RecordHeldClassUseCase(classroom),
-    issue: new IssueClassroomTokenUseCase(classroom, tokens),
+    issue: new IssueClassroomTokenUseCase(classroom, tokens, labs),
     lifecycle: new RecordRoomLifecycleUseCase(classroom, notifier),
     sheet: new GetSessionAttendanceUseCase(classroom),
     byHand: new RecordAttendanceByHandUseCase(classroom, notifier),
     participation: new RecordParticipationUseCase(classroom),
     chat: new RecordChatMessageUseCase(classroom),
+    chatRemoval: new RemoveChatMessageUseCase(classroom),
     transcript: new RecordTranscriptSegmentUseCase(classroom),
   };
 }
@@ -199,6 +203,7 @@ describe('entering a class', () => {
         identity: ctx.alan.id,
         displayName: 'Alan Prueba',
         canModerate: true,
+        shareableLabs: ['gravity', 'completions'],
       },
     ]);
   });
@@ -210,7 +215,7 @@ describe('entering a class', () => {
     const access = await ctx.issue.execute(A, [ctx.grace], sessionId);
 
     expect(access).toMatchObject({ identity: ctx.grace.id, role: 'STUDENT' });
-    expect(ctx.tokens.grants[0]).toMatchObject({ identity: ctx.grace.id, canModerate: false });
+    expect(ctx.tokens.grants[0]).toMatchObject({ identity: ctx.grace.id, canModerate: false, shareableLabs: [] });
   });
 
   it('picks the membership that takes part when the person holds several', async () => {
@@ -446,6 +451,25 @@ describe('recording a live class', () => {
     ).rejects.toBeInstanceOf(InvalidSessionEventException);
   });
 
+  it('marks a message taken down once, and leaves alone one it never stored', async () => {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+    const message = { id: randomUUID(), sessionId, senderId: ctx.grace.id, content: 'Hola', sentAt: at(3) };
+    const removal = { id: message.id, sessionId, deletedById: ctx.grace.id, deletedAt: at(4) };
+    await ctx.chat.execute(message);
+
+    await ctx.chatRemoval.execute(removal);
+    await ctx.chatRemoval.execute({ ...removal, deletedAt: at(9) });
+    await ctx.chatRemoval.execute({ ...removal, id: randomUUID() });
+
+    expect(ctx.classroom.removedChatMessages).toEqual([removal]);
+    // The message stays as history
+    expect(ctx.classroom.chatMessages).toHaveLength(1);
+    await expect(ctx.chatRemoval.execute({ ...removal, sessionId: randomUUID() })).rejects.toBeInstanceOf(
+      ClassSessionNotFoundException,
+    );
+  });
+
   it('stores transcript segments, with or without a speaker, and refuses one that ends before it starts', async () => {
     const ctx = setup();
     const sessionId = await ctx.open();
@@ -488,7 +512,13 @@ describe('recording a live class', () => {
 describe('LiveKit access tokens', () => {
   const config = { apiKey: 'devkey', apiSecret: 's'.repeat(32) };
   const jwt = new JwtService({});
-  const grant = { roomName: 'class-1', identity: 'membership-1', displayName: 'Alan Prueba', canModerate: true };
+  const grant = {
+    roomName: 'class-1',
+    identity: 'membership-1',
+    displayName: 'Alan Prueba',
+    canModerate: true,
+    shareableLabs: ['gravity', 'function-grapher'],
+  };
 
   it('signs a token LiveKit accepts: issued by the API key, for one room and one identity', async () => {
     const token = await new LiveKitTokenIssuer(jwt, config).issue(grant);
@@ -507,16 +537,20 @@ describe('LiveKit access tokens', () => {
         canPublish: true,
         canSubscribe: true,
         canPublishData: false,
-        roomAdmin: true,
       },
+      attributes: { role: 'TEACHER', labs: 'gravity,function-grapher' },
     });
+    // Moderation goes through the video-server: no browser holds LiveKit's room administration
+    expect(claims.video).not.toHaveProperty('roomAdmin');
     expect(Number(claims.exp) - Number(claims.iat)).toBe(4 * 60 * 60);
   });
 
-  it('gives a Student no room administration', async () => {
-    const token = await new LiveKitTokenIssuer(jwt, config).issue({ ...grant, canModerate: false });
+  it('signs a Student in as a Student, who moderates nothing', async () => {
+    const token = await new LiveKitTokenIssuer(jwt, config).issue({ ...grant, canModerate: false, shareableLabs: [] });
 
-    expect(jwt.decode<{ video: { roomAdmin: boolean } }>(token).video.roomAdmin).toBe(false);
+    const claims = jwt.decode<{ video: object; attributes: { role: string } }>(token);
+    expect(claims.attributes).toEqual({ role: 'STUDENT', labs: '' });
+    expect(claims.video).not.toHaveProperty('roomAdmin');
   });
 
   it('is unavailable when no video server is configured', async () => {

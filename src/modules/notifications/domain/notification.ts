@@ -103,6 +103,12 @@ export function emailFor(type: NotificationType, data: NotificationData, firstNa
           : `${text(data, 'studentName')} no estuvo en la clase de ${text(data, 'subjectName')} (${utc(text(data, 'date'))}).`,
         'Si crees que es un error, escribe a su docente desde la plataforma.',
       );
+    case NotificationType.LAB_ASSIGNED:
+      return compose(
+        `Nueva actividad de laboratorio en ${text(data, 'subjectName')}: ${text(data, 'title')}`,
+        `Tu docente te asignó la actividad «${text(data, 'title')}» en ${text(data, 'subjectName')} (grupo ${text(data, 'groupName')}).`,
+        text(data, 'dueAt') ? `Fecha de entrega: ${utc(text(data, 'dueAt'))}.` : 'No tiene fecha de entrega.',
+      );
     case NotificationType.DIRECT_MESSAGE:
       return compose(
         `Nuevo mensaje de ${text(data, 'senderName')}`,

@@ -5,8 +5,10 @@ import {
   RecordParticipationUseCase,
   RecordRoomLifecycleUseCase,
   RecordTranscriptSegmentUseCase,
+  RemoveChatMessageUseCase,
 } from '../application/use-cases/session-recording.use-cases.js';
 import {
+  ChatMessageDeletedDto,
   ChatMessageDto,
   ParticipantJoinedDto,
   ParticipantLeftDto,
@@ -23,6 +25,7 @@ export class InternalClassroomController {
     @Inject(RecordRoomLifecycleUseCase) private readonly lifecycle: RecordRoomLifecycleUseCase,
     @Inject(RecordParticipationUseCase) private readonly participation: RecordParticipationUseCase,
     @Inject(RecordChatMessageUseCase) private readonly chat: RecordChatMessageUseCase,
+    @Inject(RemoveChatMessageUseCase) private readonly chatRemoval: RemoveChatMessageUseCase,
     @Inject(RecordTranscriptSegmentUseCase) private readonly transcript: RecordTranscriptSegmentUseCase,
   ) {}
 
@@ -87,6 +90,20 @@ export class InternalClassroomController {
       senderId: dto.senderId,
       content: dto.content,
       sentAt: dto.sentAt,
+    });
+  }
+
+  @Post('chat-messages/deleted')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  chatMessageDeleted(
+    @Param('sessionId', ParseUUIDPipe) sessionId: string,
+    @Body() dto: ChatMessageDeletedDto,
+  ): Promise<void> {
+    return this.chatRemoval.execute({
+      id: dto.id,
+      sessionId,
+      deletedById: dto.deletedById,
+      deletedAt: dto.deletedAt,
     });
   }
 

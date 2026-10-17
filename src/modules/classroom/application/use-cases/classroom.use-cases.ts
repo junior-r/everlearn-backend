@@ -16,6 +16,7 @@ import {
   type SessionAccess,
   type TeachableCourse,
 } from '../../domain/classroom.js';
+import type { AvailableLabs } from '../../../../shared/domain/labs/available-labs.js';
 import type { ClassroomRepository, VideoTokenIssuer } from '../../domain/ports/classroom.ports.js';
 
 const MS_PER_MINUTE = 60_000;
@@ -129,6 +130,7 @@ export class IssueClassroomTokenUseCase {
   constructor(
     private readonly classroom: ClassroomRepository,
     private readonly tokens: VideoTokenIssuer,
+    private readonly labs: AvailableLabs,
   ) {}
 
   /** Lets the assigned Teacher and the group's enrolled Students, and nobody else, into an open class. */
@@ -152,11 +154,14 @@ export class IssueClassroomTokenUseCase {
       throw new ClassSessionClosedException();
     }
     const roomName = roomNameFor(session.sessionId);
+    const canModerate = participant.role === ClassroomRole.TEACHER;
     const token = await this.tokens.issue({
       roomName,
       identity: participant.id,
       displayName: await this.classroom.displayName(participant.id),
-      canModerate: participant.role === ClassroomRole.TEACHER,
+      canModerate,
+      // Only the Teacher shares labs with the class, and only those the institution may use
+      shareableLabs: canModerate ? await this.labs.keysFor(institutionId) : [],
     });
     return {
       token,

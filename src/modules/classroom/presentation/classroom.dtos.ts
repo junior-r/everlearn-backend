@@ -68,6 +68,18 @@ export class ChatMessageDto {
   sentAt: Date;
 }
 
+export class ChatMessageDeletedDto {
+  @IsUUID()
+  id: string;
+
+  @IsUUID()
+  deletedById: string;
+
+  @Type(() => Date)
+  @IsDate()
+  deletedAt: Date;
+}
+
 export class TranscriptSegmentDto {
   @IsUUID()
   id: string;

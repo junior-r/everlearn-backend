@@ -12,6 +12,8 @@ export const NotificationType = {
   WARD_EVALUATION_PUBLISHED: 'WARD_EVALUATION_PUBLISHED',
   WARD_GRADE_POSTED: 'WARD_GRADE_POSTED',
   WARD_ATTENDANCE: 'WARD_ATTENDANCE',
+  /** To a Student: their Teacher gave the group a lab activity. */
+  LAB_ASSIGNED: 'LAB_ASSIGNED',
 } as const;
 export type NotificationType = (typeof NotificationType)[keyof typeof NotificationType];
 

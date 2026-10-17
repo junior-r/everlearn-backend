@@ -228,6 +228,14 @@ describe('Virtual classroom (HTTP)', () => {
         expect.objectContaining({ speakerId: alan.membershipId, text: 'Buenos días' }),
       ]);
       expect(ctx.classroom.sessions[0].status).toBe('COMPLETED');
+      // A message taken down is reported once more, and a retried report changes nothing
+      const removal = { id: chatId, deletedById: alan.membershipId, deletedAt: '2026-10-12T08:04:00.000Z' };
+      await internal(`${sessionId}/chat-messages/deleted`).send(removal).expect(204);
+      await internal(`${sessionId}/chat-messages/deleted`).send(removal).expect(204);
+      await internal(`${sessionId}/chat-messages/deleted`).send({ ...removal, id: 'nope' }).expect(400);
+      expect(ctx.classroom.removedChatMessages).toEqual([
+        expect.objectContaining({ id: chatId, deletedById: alan.membershipId }),
+      ]);
       // The class is over, so nobody gets in any more
       const late = await as(grace.token, institutionId).post(`/class-sessions/${sessionId}/token`);
       expect(late.status).toBe(409);

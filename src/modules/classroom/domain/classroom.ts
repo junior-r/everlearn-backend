@@ -85,6 +85,14 @@ export interface ChatMessage {
   sentAt: Date;
 }
 
+/** A chat message taken down during the class, by its author or by the Teacher. */
+export interface ChatMessageRemoval {
+  id: string;
+  sessionId: string;
+  deletedById: string;
+  deletedAt: Date;
+}
+
 export interface TranscriptSegment {
   id: string;
   sessionId: string;

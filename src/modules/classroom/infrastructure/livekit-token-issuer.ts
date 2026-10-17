@@ -1,6 +1,6 @@
 import type { JwtService } from '@nestjs/jwt';
 import type { LiveKitConfig } from '../../../config/app-config.js';
-import { VideoUnavailableException } from '../domain/classroom.js';
+import { ClassroomRole, VideoUnavailableException } from '../domain/classroom.js';
 import type { VideoGrant, VideoTokenIssuer } from '../domain/ports/classroom.ports.js';
 
 // Long enough for a class; the same token authorizes the participant's chat messages
@@ -27,10 +27,15 @@ export class LiveKitTokenIssuer implements VideoTokenIssuer {
       canSubscribe: true,
       // Chat and captions reach the room through the video-server, never straight from a browser
       canPublishData: false,
-      roomAdmin: grant.canModerate,
+    };
+    // Seen by the room and read by the video-server, which is the only one that moderates and shares labs
+    const attributes = {
+      role: grant.canModerate ? ClassroomRole.TEACHER : ClassroomRole.STUDENT,
+      // LiveKit attributes are strings: the keys are joined with commas
+      labs: grant.shareableLabs.join(','),
     };
     return this.jwt.signAsync(
-      { name: grant.displayName, video },
+      { name: grant.displayName, video, attributes },
       {
         issuer: this.config.apiKey,
         subject: grant.identity,
