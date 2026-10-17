@@ -37,6 +37,11 @@ import {
   VIDEO_TOKEN_ISSUER,
 } from '../../src/modules/classroom/domain/ports/classroom.ports.js';
 import { EVALUATION_REPOSITORY } from '../../src/modules/evaluations/domain/ports/evaluation.ports.js';
+import {
+  LAB_ACCESS_REPOSITORY,
+  LAB_ASSIGNMENT_REPOSITORY,
+  LANGUAGE_EXERCISE_REPOSITORY,
+} from '../../src/modules/labs/domain/ports/lab.ports.js';
 import { UserStatus } from '../../src/modules/identity/domain/entities/user.entity.js';
 import { GOOGLE_OAUTH_GATEWAY } from '../../src/modules/identity/domain/ports/google-oauth.gateway.js';
 import { MEMBER_REPOSITORY } from '../../src/modules/identity/domain/ports/member.repository.js';
@@ -70,6 +75,11 @@ import {
 } from './communication.fakes.js';
 import { InMemoryEvaluationRepository } from './evaluation.fakes.js';
 import { InMemoryGuardianRepository } from './guardian.fakes.js';
+import {
+  InMemoryLabAccessRepository,
+  InMemoryLabAssignmentRepository,
+  InMemoryLanguageExerciseRepository,
+} from './lab.fakes.js';
 import {
   InMemoryGroupRepository,
   InMemoryMemberDirectory,
@@ -215,6 +225,9 @@ export async function createTestApp(extraControllers: Type[] = [], options: Test
     classroom: new InMemoryClassroomRepository(groups, directory),
     videoTokens: new FakeVideoTokenIssuer(),
     evaluations: new InMemoryEvaluationRepository(groups, directory),
+    labAccess: new InMemoryLabAccessRepository(),
+    languageExercises: new InMemoryLanguageExerciseRepository(),
+    labAssignments: new InMemoryLabAssignmentRepository(groups, directory),
     teaching: new InMemoryTeachingRecords(),
     dashboards: new InMemoryDashboardQueries(),
     notifications,
@@ -298,6 +311,12 @@ export async function createTestApp(extraControllers: Type[] = [], options: Test
     .useValue(fakes.videoTokens)
     .overrideProvider(EVALUATION_REPOSITORY)
     .useValue(fakes.evaluations)
+    .overrideProvider(LAB_ACCESS_REPOSITORY)
+    .useValue(fakes.labAccess)
+    .overrideProvider(LANGUAGE_EXERCISE_REPOSITORY)
+    .useValue(fakes.languageExercises)
+    .overrideProvider(LAB_ASSIGNMENT_REPOSITORY)
+    .useValue(fakes.labAssignments)
     .overrideProvider(TEACHING_RECORDS)
     .useValue(fakes.teaching)
     .overrideProvider(NOTIFICATION_REPOSITORY)

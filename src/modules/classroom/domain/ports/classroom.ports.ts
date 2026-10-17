@@ -71,6 +71,8 @@ export interface VideoGrant {
   displayName: string;
   /** True for the Teacher of the class: the video-server lets only them keep order in the room. */
   canModerate: boolean;
+  /** The labs this participant may share with the room; empty for anyone but the Teacher. */
+  shareableLabs: string[];
 }
 
 export interface VideoTokenIssuer {
