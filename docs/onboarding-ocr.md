@@ -10,7 +10,7 @@ Read the identity fields from the photo, let the applicant correct them, and sto
 
 ## The Reason
 
-- **OCR behind a port (`OcrProvider`).** The use cases only know the interface. `HttpOcrProvider` sends the photo to our own `/ocr-server` (FastAPI + Tesseract, see `ocr-server/README.md`), so ID photos never go to a third party. `MockOcrProvider` (fixed sample data) is used only when `OCR_SERVICE_URL` is not set, e.g. running the backend alone.
+- **OCR behind a port (`OcrProvider`).** The use cases only know the interface. `HttpOcrProvider` sends the photo to our own `/ocr-server` (FastAPI + RapidOCR, see `ocr-server/README.md`), so ID photos never go to a third party. `MockOcrProvider` (fixed sample data) is used only when `OCR_SERVICE_URL` is not set, e.g. running the backend alone.
 - **Synchronous request.** The upload waits for the OCR result. Simpler than a job queue while OCR takes about a second; the call times out after 30 s.
 - **Format checked by file signature**, never by the client-supplied name or MIME type, which an attacker controls.
 - **Photos stored privately** behind the `DocumentStorage` port. The local-disk adapter writes outside any served directory and returns an opaque key, not a URL.
