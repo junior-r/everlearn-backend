@@ -42,6 +42,7 @@ import {
   RecordRoomLifecycleUseCase,
   RecordTranscriptSegmentUseCase,
 } from './session-recording.use-cases.js';
+import { GetClassTranscriptUseCase, ListCourseTranscriptsUseCase } from './transcript.use-cases.js';
 
 const A = 'institution-a';
 const B = 'institution-b';
@@ -107,6 +108,8 @@ function setup() {
     chat: new RecordChatMessageUseCase(classroom),
     chatRemoval: new RemoveChatMessageUseCase(classroom),
     transcript: new RecordTranscriptSegmentUseCase(classroom),
+    transcripts: new ListCourseTranscriptsUseCase(classroom, classroom),
+    classTranscript: new GetClassTranscriptUseCase(classroom, classroom),
   };
 }
 
@@ -713,6 +716,80 @@ describe('the classes of a course', () => {
     await expect(ctx.sessions.execute(course(ctx, ctx.alan, B))).rejects.toBeInstanceOf(CourseNotFoundException);
     await expect(ctx.held.execute(course(ctx, ctx.alan, B), at(0), at(30))).rejects.toBeInstanceOf(
       CourseNotFoundException,
+    );
+  });
+});
+
+describe('transcripts of past classes', () => {
+  /** A class Alan gave, with a line of his, one of Grace's and one nobody claimed. */
+  async function transcribedClass(ctx: ReturnType<typeof setup>) {
+    const sessionId = await ctx.open();
+    await ctx.lifecycle.started(sessionId, at(0));
+    const say = (speakerId: string | null, text: string, minute: number) =>
+      ctx.transcript.execute({
+        id: randomUUID(),
+        sessionId,
+        speakerId,
+        text,
+        language: 'es',
+        startedAt: at(minute),
+        endedAt: at(minute + 1),
+      });
+    await say(ctx.grace.id, '¿Puede repetir?', 5);
+    await say(ctx.alan.id, 'Buenos días', 1);
+    await say(null, 'Ruido', 9);
+    await ctx.lifecycle.finished(sessionId, at(50));
+    return sessionId;
+  }
+  const course = (ctx: ReturnType<typeof setup>, member: MembershipClaim, institutionId = A) => ({
+    institutionId,
+    memberships: [member],
+    groupId: ctx.groupId,
+    subjectId: MATH,
+  });
+
+  it('lists the classes of a course that have a transcript, for its Teacher and its Students', async () => {
+    const ctx = setup();
+    const sessionId = await transcribedClass(ctx);
+    // A class with nothing transcribed is left out
+    await ctx.open();
+
+    for (const member of [ctx.alan, ctx.grace]) {
+      expect(await ctx.transcripts.execute(course(ctx, member))).toEqual({
+        subjectName: MATH,
+        groupName: '1ro A',
+        sessions: [{ sessionId, startsAt: at(0), lines: 3 }],
+      });
+    }
+  });
+
+  it('reads what was said in order, with the speaker of each line', async () => {
+    const ctx = setup();
+    const sessionId = await transcribedClass(ctx);
+
+    const transcript = await ctx.classTranscript.execute(A, [ctx.grace], sessionId);
+
+    expect(transcript).toMatchObject({ sessionId, groupName: '1ro A', startsAt: at(0) });
+    expect(transcript.lines.map(({ speakerName, text }) => [speakerName, text])).toEqual([
+      ['Alan Prueba', 'Buenos días'],
+      ['Grace Prueba', '¿Puede repetir?'],
+      [null, 'Ruido'],
+    ]);
+  });
+
+  it('is not found for another Teacher, a Student of another group, or another institution', async () => {
+    const ctx = setup();
+    const sessionId = await transcribedClass(ctx);
+
+    for (const member of [ctx.emmy, ctx.linus]) {
+      await expect(ctx.transcripts.execute(course(ctx, member))).rejects.toBeInstanceOf(CourseNotFoundException);
+      await expect(ctx.classTranscript.execute(A, [member], sessionId)).rejects.toBeInstanceOf(
+        ClassSessionNotFoundException,
+      );
+    }
+    await expect(ctx.transcripts.execute(course(ctx, ctx.alan, B))).rejects.toBeInstanceOf(CourseNotFoundException);
+    await expect(ctx.classTranscript.execute(B, [ctx.alan], sessionId)).rejects.toBeInstanceOf(
+      ClassSessionNotFoundException,
     );
   });
 });

@@ -18,7 +18,17 @@ import {
   GetSessionAttendanceUseCase,
   RecordAttendanceByHandUseCase,
 } from '../application/use-cases/attendance.use-cases.js';
-import type { AttendanceSheet, ClassroomCourse, CourseSessions } from '../domain/classroom.js';
+import {
+  GetClassTranscriptUseCase,
+  ListCourseTranscriptsUseCase,
+} from '../application/use-cases/transcript.use-cases.js';
+import type {
+  AttendanceSheet,
+  ClassroomCourse,
+  ClassTranscript,
+  CourseSessions,
+  CourseTranscripts,
+} from '../domain/classroom.js';
 import { RecordAttendanceDto, RecordHeldClassDto } from './classroom.dtos.js';
 
 /** Live classes of the institution in the `x-institution-id` header, for the members who give or attend them. */
@@ -32,6 +42,8 @@ export class ClassroomController {
     @Inject(RecordHeldClassUseCase) private readonly recordHeldClass: RecordHeldClassUseCase,
     @Inject(GetSessionAttendanceUseCase) private readonly sessionAttendance: GetSessionAttendanceUseCase,
     @Inject(RecordAttendanceByHandUseCase) private readonly recordAttendance: RecordAttendanceByHandUseCase,
+    @Inject(ListCourseTranscriptsUseCase) private readonly listTranscripts: ListCourseTranscriptsUseCase,
+    @Inject(GetClassTranscriptUseCase) private readonly classTranscript: GetClassTranscriptUseCase,
   ) {}
 
   @Get('classroom/courses')
@@ -122,5 +134,27 @@ export class ClassroomController {
       sessionId,
       dto.marks.map(({ enrollmentId, status, note }) => ({ enrollmentId, status, note: note ?? null })),
     );
+  }
+
+  /** The classes of a course that have a transcript, for its Teacher and the Students of its group. */
+  @Get('groups/:groupId/courses/:subjectId/transcripts')
+  @Roles(Role.TEACHER, Role.STUDENT)
+  transcripts(
+    @CurrentInstitutionId() institutionId: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('groupId', ParseUUIDPipe) groupId: string,
+    @Param('subjectId', ParseUUIDPipe) subjectId: string,
+  ): Promise<CourseTranscripts> {
+    return this.listTranscripts.execute({ institutionId, memberships: user.memberships, groupId, subjectId });
+  }
+
+  @Get('class-sessions/:sessionId/transcript')
+  @Roles(Role.TEACHER, Role.STUDENT)
+  transcript(
+    @CurrentInstitutionId() institutionId: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('sessionId', ParseUUIDPipe) sessionId: string,
+  ): Promise<ClassTranscript> {
+    return this.classTranscript.execute(institutionId, user.memberships, sessionId);
   }
 }
