@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type { AuthenticatedUser } from '../../../../shared/domain/auth/authenticated-user.js';
+import { requiresIdentityCheck } from '../../../../shared/domain/auth/registration.js';
 import type { Role } from '../../../../shared/domain/auth/role.js';
 import { normalizeEmail, type User } from '../../domain/entities/user.entity.js';
 import { AccountSuspendedException } from '../../domain/exceptions/identity.exceptions.js';
@@ -7,7 +8,6 @@ import {
   assertCanRegister,
   MEMBER_PAGE_SIZE,
   MEMBER_SEARCH_LIMIT,
-  requiresOnboarding,
   searchTerms,
   type Member,
   type MemberMatch,
@@ -58,7 +58,7 @@ export class RegisterMemberUseCase {
     return existing ? this.addToExisting(existing, input) : this.createAccount(email, input);
   }
 
-  /** New accounts for Teachers and Students start pending, with an inactive membership, until their ID is reviewed. */
+  /** New accounts start pending, with an inactive membership, until their ID is checked at the institution. */
   private async createAccount(email: string, input: RegisterMemberInput): Promise<RegisteredMember> {
     const temporaryPassword = this.generatePassword();
     const member = await this.members.register({
@@ -68,7 +68,7 @@ export class RegisterMemberUseCase {
       lastName: input.lastName.trim(),
       passwordHash: await this.hasher.hash(temporaryPassword),
       role: input.role,
-      activate: !requiresOnboarding(input.role),
+      activate: !requiresIdentityCheck(input.role),
     });
     return { member, temporaryPassword };
   }
@@ -76,13 +76,13 @@ export class RegisterMemberUseCase {
   /**
    * Identity is verified once per person, not once per institution: someone
    * already active gets the new role immediately, while someone still pending
-   * gets it when their ID check is approved. The name on the account is kept.
+   * gets it when their ID is checked. The name on the account is kept.
    */
   private async addToExisting(user: User, input: RegisterMemberInput): Promise<RegisteredMember> {
     if (user.isSuspended()) {
       throw new AccountSuspendedException();
     }
-    const trusted = !requiresOnboarding(input.role);
+    const trusted = !requiresIdentityCheck(input.role);
     const member = await this.members.addMembership({
       userId: user.id,
       institutionId: input.institutionId,

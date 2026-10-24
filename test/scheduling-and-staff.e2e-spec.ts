@@ -70,7 +70,7 @@ describe('Staff permissions and scheduling (HTTP)', () => {
       const staff = (await ctx.signInAs(Role.STAFF, institutionId, 'staff@example.com')).token;
       const api = as(staff, institutionId);
 
-      for (const path of ['/subjects', '/pensums', '/periods', '/groups', '/onboarding/applications/pending']) {
+      for (const path of ['/subjects', '/pensums', '/periods', '/groups']) {
         await api.get(path).expect(403);
       }
       await api.post('/institutions').send({ name: 'X', slug: 'x-school' }).expect(403);
@@ -81,7 +81,7 @@ describe('Staff permissions and scheduling (HTTP)', () => {
         .expect(403);
     });
 
-    it.each([Role.TEACHER, Role.STUDENT, Role.COORDINATOR])('gives a %s no access to member management', async (role) => {
+    it.each([Role.TEACHER, Role.STUDENT])('gives a %s no access to member management', async (role) => {
       const member = (await ctx.signInAs(role, institutionId, `${role}@example.com`)).token;
 
       await as(member, institutionId).get('/members').expect(403);

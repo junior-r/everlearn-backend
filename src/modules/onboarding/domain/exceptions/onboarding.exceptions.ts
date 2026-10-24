@@ -16,43 +16,28 @@ export class DocumentImageTooLargeException extends DomainException {
   }
 }
 
-export class ApplicationAlreadySubmittedException extends DomainException {
+export class IdentityAlreadyVerifiedException extends DomainException {
   constructor() {
-    super('CONFLICT', 'APPLICATION_ALREADY_SUBMITTED', 'The application was already submitted');
+    super('CONFLICT', 'IDENTITY_ALREADY_VERIFIED', "This member's ID was already checked");
   }
 }
 
 export class NothingToConfirmException extends DomainException {
   constructor() {
-    super('CONFLICT', 'NOTHING_TO_CONFIRM', 'Upload a document before confirming your data');
+    super('CONFLICT', 'NOTHING_TO_CONFIRM', 'Photograph the ID before confirming its data');
   }
 }
 
-export class OnboardingNotAvailableException extends DomainException {
+/** Also for a member of another institution, so its existence is not revealed. */
+export class ApplicantNotFoundException extends DomainException {
   constructor() {
-    super(
-      'CONFLICT',
-      'ONBOARDING_NOT_AVAILABLE',
-      'This account has no pending registration to verify',
-    );
+    super('NOT_FOUND', 'MEMBER_NOT_FOUND', 'Member not found');
   }
 }
 
-export class ApplicationNotFoundException extends DomainException {
+export class IdentityCheckNotAllowedException extends DomainException {
   constructor() {
-    super('NOT_FOUND', 'APPLICATION_NOT_FOUND', 'Application not found');
-  }
-}
-
-export class ApplicationNotAwaitingReviewException extends DomainException {
-  constructor() {
-    super('CONFLICT', 'APPLICATION_NOT_AWAITING_REVIEW', 'The application is not awaiting review');
-  }
-}
-
-export class RejectionReasonRequiredException extends DomainException {
-  constructor() {
-    super('VALIDATION', 'REJECTION_REASON_REQUIRED', 'A reason is required to reject an application');
+    super('FORBIDDEN', 'IDENTITY_CHECK_NOT_ALLOWED', "You cannot check this member's ID");
   }
 }
 

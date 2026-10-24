@@ -1,6 +1,5 @@
 import request from 'supertest';
 import { Role } from '../src/shared/domain/auth/role.js';
-import { TEST_PASSWORD } from './support/identity.fakes.js';
 import { JPEG_BYTES } from './support/onboarding.fakes.js';
 import { createTestApp, type TestApp } from './support/test-app.js';
 
@@ -245,149 +244,128 @@ describe('Institution hierarchy and admin pipeline (HTTP)', () => {
     });
   });
 
-  describe('onboarding review', () => {
-    /** Registers a Student and walks them through upload and confirmation. */
-    async function submittedApplication(adminToken: string, email = 'grace@example.com') {
-      const registered = await as(adminToken, institutionId)
-        .post('/members')
-        .send(newMember(Role.STUDENT, email))
-        .expect(201);
-      const studentToken = await ctx.tokenAfterPasswordChange(email, registered.body.temporaryPassword);
-      await as(studentToken)
-        .post('/onboarding/document')
-        .field('documentType', 'NATIONAL_ID')
-        .attach('file', Buffer.from(JPEG_BYTES), 'id.jpg')
-        .expect(200);
-      const confirmed = await as(studentToken).post('/onboarding/confirm').send(confirmation).expect(200);
+  describe('ID check at the desk', () => {
+    /** Registers a pending member at the desk; `membershipId` is what the desk checks next. */
+    async function registered(deskToken: string, role: Role = Role.STUDENT, email = 'grace@example.com') {
+      const response = await as(deskToken, institutionId).post('/members').send(newMember(role, email)).expect(201);
       return {
         email,
-        studentToken,
-        applicationId: confirmed.body.application.id as string,
+        membershipId: response.body.member.membershipId as string,
+        temporaryPassword: response.body.temporaryPassword as string,
       };
     }
+    const photograph = (deskToken: string, membershipId: string, institution = institutionId) =>
+      as(deskToken, institution)
+        .post(`/onboarding/members/${membershipId}/document`)
+        .field('documentType', 'NATIONAL_ID')
+        .attach('file', Buffer.from(JPEG_BYTES), 'id.jpg');
+    const confirm = (deskToken: string, membershipId: string, institution = institutionId) =>
+      as(deskToken, institution).post(`/onboarding/members/${membershipId}/confirm`).send(confirmation);
 
-    it('runs the whole pipeline: register, onboard, review, approve, activate', async () => {
-      const admin = await ctx.signInAs(Role.ADMIN, institutionId);
-      const api = as(admin.token, institutionId);
-      const student = await submittedApplication(admin.token);
+    it('runs the whole enrolment at the desk: register, photograph the ID, confirm, active at once', async () => {
+      const desk = await ctx.signInAs(Role.STAFF, institutionId, 'staff@example.com');
+      const student = await registered(desk.token);
 
-      // A pending member holds no role yet, whatever their token says
-      await as(student.studentToken, institutionId).get('/members').expect(403);
-
-      const pending = await api.get('/onboarding/applications/pending').expect(200);
-      expect(pending.body).toHaveLength(1);
-      expect(pending.body[0]).toMatchObject({
-        id: student.applicationId,
-        requestedRole: 'STUDENT',
-        // The name the admin typed stays visible next to what the ID says
-        applicant: { email: student.email, firstName: 'Grace', lastName: 'Hopper' },
+      const read = await photograph(desk.token, student.membershipId).expect(200);
+      expect(read.body.application).toMatchObject({
+        status: 'PENDING_CONFIRMATION',
         extracted: { firstName: 'María Fernanda', documentNumber: '12345678' },
-        confirmed: { firstName: 'Grace Brewster', documentNumber: '87654321' },
       });
 
-      const photo = await api.get(`/onboarding/application/${student.applicationId}/document`).expect(200);
-      expect(photo.headers['content-type']).toBe('image/jpeg');
-      expect(photo.headers['cache-control']).toContain('no-store');
-      expect(Buffer.from(photo.body).equals(Buffer.from(JPEG_BYTES))).toBe(true);
+      const confirmed = await confirm(desk.token, student.membershipId).expect(200);
+      expect(confirmed.body.application.status).toBe('APPROVED');
+      expect(ctx.applications.checks[0].verifierMembershipId).toBe(desk.membership.id);
 
-      const reviewed = await api
-        .post(`/onboarding/application/${student.applicationId}/review`)
-        .send({ decision: 'APPROVE' })
-        .expect(200);
-      expect(reviewed.body.application.status).toBe('APPROVED');
-      expect(ctx.applications.reviews[0].reviewerMembershipId).toBe(admin.membership.id);
-      expect((await api.get('/onboarding/applications/pending')).body).toEqual([]);
-
-      // The next sign-in is an active Student with the name from their ID
-      const login = await request(ctx.server)
-        .post('/auth/login')
-        .send({ email: student.email, password: TEST_PASSWORD })
-        .expect(200);
-      expect(login.body.user).toMatchObject({
+      // The first sign-in is already an active Student, with the name from their ID
+      const token = await ctx.tokenAfterPasswordChange(student.email, student.temporaryPassword);
+      const me = await as(token).get('/auth/me').expect(200);
+      expect(me.body).toMatchObject({
         status: 'ACTIVE',
         firstName: 'Grace Brewster',
         memberships: [{ institutionId, role: 'STUDENT' }],
       });
     });
 
-    it('rejects with a reason, lets the member retry, and keeps them pending', async () => {
-      const admin = (await ctx.signInAs(Role.ADMIN, institutionId)).token;
-      const student = await submittedApplication(admin);
-      const review = (body: object) =>
-        as(admin, institutionId).post(`/onboarding/application/${student.applicationId}/review`).send(body);
+    it('lets a Principal enrol Students and Guardians at the desk, but not staff', async () => {
+      const principal = (await ctx.signInAs(Role.COORDINATOR, institutionId, 'principal@example.com')).token;
+      const student = await registered(principal);
 
-      const missingReason = await review({ decision: 'REJECT' });
-      expect(missingReason.status).toBe(400);
-      expect(missingReason.body.code).toBe('REJECTION_REASON_REQUIRED');
-
-      await review({ decision: 'REJECT', reason: 'La foto no coincide' }).expect(200);
-
-      const mine = await as(student.studentToken).get('/onboarding/application').expect(200);
-      expect(mine.body.application).toMatchObject({
-        status: 'REJECTED',
-        rejectionReason: 'La foto no coincide',
-      });
-      const retry = await as(student.studentToken)
-        .post('/onboarding/document')
-        .field('documentType', 'NATIONAL_ID')
-        .attach('file', Buffer.from(JPEG_BYTES), 'id.jpg')
-        .expect(200);
-      expect(retry.body.application.id).not.toBe(student.applicationId);
-      const stillPending = await as(student.studentToken).get('/auth/me').expect(200);
-      expect(stillPending.body.status).toBe('PENDING_ONBOARDING');
+      await photograph(principal, student.membershipId).expect(200);
+      await confirm(principal, student.membershipId).expect(200);
+      await registered(principal, Role.GUARDIAN, 'guardian@example.com');
+      const teacher = await as(principal, institutionId).post('/members').send(newMember(Role.TEACHER, 't@example.com'));
+      expect(teacher.status).toBe(403);
+      expect(teacher.body.code).toBe('MEMBER_ROLE_NOT_ALLOWED');
     });
 
-    it('lets only Institution Admins of that institution see or review applications', async () => {
+    it('keeps the ID check of Teachers and staff for Institution Admins', async () => {
       const admin = (await ctx.signInAs(Role.ADMIN, institutionId, 'admin@example.com')).token;
-      const student = await submittedApplication(admin);
-      const reviewPath = `/onboarding/application/${student.applicationId}/review`;
-      const photoPath = `/onboarding/application/${student.applicationId}/document`;
+      const staff = (await ctx.signInAs(Role.STAFF, institutionId, 'staff@example.com')).token;
+      const teacher = await registered(admin, Role.TEACHER, 'teacher@example.com');
+
+      const refused = await photograph(staff, teacher.membershipId);
+      expect(refused.status).toBe(403);
+      expect(refused.body.code).toBe('IDENTITY_CHECK_NOT_ALLOWED');
+      await photograph(admin, teacher.membershipId).expect(200);
+      await confirm(admin, teacher.membershipId).expect(200);
+    });
+
+    it('lets nobody else in, and hides members of other institutions', async () => {
+      const admin = (await ctx.signInAs(Role.ADMIN, institutionId, 'admin@example.com')).token;
+      const student = await registered(admin);
+      const own = await ctx.tokenAfterPasswordChange(student.email, student.temporaryPassword);
 
       const teacher = (await ctx.signInAs(Role.TEACHER, institutionId, 'teacher@example.com')).token;
-      await as(teacher, institutionId).get('/onboarding/applications/pending').expect(403);
-      await as(teacher, institutionId).post(reviewPath).send({ decision: 'APPROVE' }).expect(403);
-      await as(teacher, institutionId).get(photoPath).expect(403);
-      // The applicant cannot approve themselves
-      await as(student.studentToken, institutionId).post(reviewPath).send({ decision: 'APPROVE' }).expect(403);
+      await photograph(teacher, student.membershipId).expect(403);
+      await confirm(teacher, student.membershipId).expect(403);
+      // Nobody verifies themselves: a pending member holds no role
+      await photograph(own, student.membershipId).expect(403);
+      await confirm(own, student.membershipId).expect(403);
 
       const outsider = (await ctx.signInAs(Role.ADMIN, otherInstitutionId, 'outsider@example.com')).token;
-      expect((await as(outsider, otherInstitutionId).get('/onboarding/applications/pending')).body).toEqual([]);
-      await as(outsider, otherInstitutionId).post(reviewPath).send({ decision: 'APPROVE' }).expect(404);
-      await as(outsider, otherInstitutionId).get(photoPath).expect(404);
-      await as(outsider, institutionId).post(reviewPath).send({ decision: 'APPROVE' }).expect(403);
+      const hidden = await photograph(outsider, student.membershipId, otherInstitutionId);
+      expect(hidden.status).toBe(404);
+      expect(hidden.body.code).toBe('MEMBER_NOT_FOUND');
+      await photograph(outsider, student.membershipId).expect(403);
 
-      expect(ctx.applications.reviews).toEqual([]);
+      expect(ctx.storage.stored).toHaveLength(0);
     });
 
-    it('refuses a second review and invalid decisions', async () => {
-      const admin = (await ctx.signInAs(Role.ADMIN, institutionId)).token;
-      const student = await submittedApplication(admin);
-      const review = (body: object) =>
-        as(admin, institutionId).post(`/onboarding/application/${student.applicationId}/review`).send(body);
+    it('checks a person once, and only after their ID was photographed', async () => {
+      const desk = (await ctx.signInAs(Role.STAFF, institutionId, 'staff@example.com')).token;
+      const student = await registered(desk);
 
-      await review({ decision: 'MAYBE' }).expect(400);
-      await review({ decision: 'APPROVE' }).expect(200);
-      const again = await review({ decision: 'REJECT', reason: 'changed my mind' });
+      const early = await confirm(desk, student.membershipId);
+      expect(early.status).toBe(409);
+      expect(early.body.code).toBe('NOTHING_TO_CONFIRM');
+
+      await photograph(desk, student.membershipId).expect(200);
+      await confirm(desk, student.membershipId).expect(200);
+      const again = await photograph(desk, student.membershipId);
       expect(again.status).toBe(409);
-      expect(again.body.code).toBe('APPLICATION_NOT_AWAITING_REVIEW');
-      await as(admin, institutionId).post('/onboarding/application/not-a-uuid/review').send({ decision: 'APPROVE' }).expect(400);
+      expect(again.body.code).toBe('IDENTITY_ALREADY_VERIFIED');
+    });
+
+    it('validates the confirmed data and the member id', async () => {
+      const desk = (await ctx.signInAs(Role.STAFF, institutionId, 'staff@example.com')).token;
+      const student = await registered(desk);
+      await photograph(desk, student.membershipId).expect(200);
+      const path = `/onboarding/members/${student.membershipId}/confirm`;
+
+      await as(desk, institutionId).post(path).send({ ...confirmation, birthDate: '14/03/2008' }).expect(400);
+      await as(desk, institutionId).post(path).send({ ...confirmation, documentType: 'LIBRARY_CARD' }).expect(400);
+      await as(desk, institutionId).post('/onboarding/members/not-a-uuid/confirm').send(confirmation).expect(400);
     });
 
     // The 5 MB limit is covered by the use-case tests and, over real HTTP, by the Playwright suite.
     // Doing it here crashed the test process: with client and server in one process on Windows,
     // cutting a large upload off mid-stream aborts Node (exit 0xC0000409) about one run in ten.
     it('checks uploads by their bytes, not by the name or type the client sends', async () => {
-      const admin = (await ctx.signInAs(Role.ADMIN, institutionId)).token;
-      const registered = await as(admin, institutionId)
-        .post('/members')
-        .send(newMember(Role.STUDENT, 'grace@example.com'));
-      const student = await ctx.tokenAfterPasswordChange(
-        'grace@example.com',
-        registered.body.temporaryPassword,
-      );
+      const desk = (await ctx.signInAs(Role.STAFF, institutionId, 'staff@example.com')).token;
+      const student = await registered(desk);
       const upload = (content: Uint8Array, name: string, contentType: string) =>
-        as(student)
-          .post('/onboarding/document')
+        as(desk, institutionId)
+          .post(`/onboarding/members/${student.membershipId}/document`)
           .field('documentType', 'NATIONAL_ID')
           .attach('file', Buffer.from(content), { filename: name, contentType });
 
@@ -401,16 +379,17 @@ describe('Institution hierarchy and admin pipeline (HTTP)', () => {
       await upload(JPEG_BYTES, 'id.exe', 'text/plain').expect(200);
     });
 
-    it('does not let an account nobody registered start onboarding', async () => {
-      const admin = await ctx.signInAs(Role.ADMIN, institutionId);
+    it('offers no way for members to submit their own ID', async () => {
+      const desk = (await ctx.signInAs(Role.STAFF, institutionId, 'staff@example.com')).token;
+      const student = await registered(desk);
+      const own = await ctx.tokenAfterPasswordChange(student.email, student.temporaryPassword);
 
-      const response = await as(admin.token)
+      await as(own).get('/onboarding/application').expect(404);
+      await as(own)
         .post('/onboarding/document')
         .field('documentType', 'NATIONAL_ID')
-        .attach('file', Buffer.from(JPEG_BYTES), 'id.jpg');
-
-      expect(response.status).toBe(409);
-      expect(response.body.code).toBe('ONBOARDING_NOT_AVAILABLE');
+        .attach('file', Buffer.from(JPEG_BYTES), 'id.jpg')
+        .expect(404);
     });
   });
 });

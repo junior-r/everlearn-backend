@@ -7,10 +7,7 @@ import {
   type Enrollment,
   type OnboardingApplication,
 } from '../../domain/entities/onboarding-application.entity.js';
-import type {
-  ApplicationUnderReview,
-  OnboardingRepository,
-} from '../../domain/ports/onboarding.ports.js';
+import type { Applicant, OnboardingRepository } from '../../domain/ports/onboarding.ports.js';
 import { toDomainApplication, toPersistence } from '../mappers/onboarding.mapper.js';
 
 const toDate = (isoDate: string) => new Date(`${isoDate}T00:00:00.000Z`);
@@ -21,34 +18,31 @@ export class PrismaOnboardingRepository implements OnboardingRepository {
 
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
-  findById(id: string): Promise<OnboardingApplication | null> {
+  findApplicant(membershipId: string, institutionId: string): Promise<Applicant | null> {
     return runQuery(this.logger, async () => {
-      const row = await this.prisma.onboardingApplication.findUnique({ where: { id } });
-      return row ? toDomainApplication(row) : null;
-    });
-  }
-
-  findLatestByUserId(userId: string): Promise<OnboardingApplication | null> {
-    return runQuery(this.logger, async () => {
-      const row = await this.prisma.onboardingApplication.findFirst({
-        where: { userId },
-        orderBy: { createdAt: 'desc' },
-      });
-      return row ? toDomainApplication(row) : null;
-    });
-  }
-
-  findPendingEnrollment(userId: string): Promise<Enrollment | null> {
-    return runQuery(this.logger, async () => {
-      // Registration leaves the membership inactive until the ID check is approved
       const membership = await this.prisma.membership.findFirst({
-        where: { userId, isActive: false, user: { status: 'PENDING_ONBOARDING' } },
-        orderBy: { createdAt: 'desc' },
-        select: { institutionId: true, role: true },
+        where: { id: membershipId, institutionId },
+        select: { id: true, role: true, user: { select: { id: true, status: true } } },
       });
       return membership
-        ? { institutionId: membership.institutionId, requestedRole: membership.role }
+        ? {
+            userId: membership.user.id,
+            membershipId: membership.id,
+            role: membership.role,
+            // Only pending accounts still need the check; a suspended one is not reopened by it
+            isVerified: membership.user.status !== 'PENDING_ONBOARDING',
+          }
         : null;
+    });
+  }
+
+  findOpen(userId: string, institutionId: string): Promise<OnboardingApplication | null> {
+    return runQuery(this.logger, async () => {
+      const row = await this.prisma.onboardingApplication.findFirst({
+        where: { userId, institutionId, status: { not: OnboardingStatus.APPROVED } },
+        orderBy: { createdAt: 'desc' },
+      });
+      return row ? toDomainApplication(row) : null;
     });
   }
 
@@ -69,7 +63,12 @@ export class PrismaOnboardingRepository implements OnboardingRepository {
     });
   }
 
-  submitForReview(application: OnboardingApplication, identity: ConfirmedIdentity): Promise<void> {
+  completeCheck(
+    application: OnboardingApplication,
+    identity: ConfirmedIdentity,
+    verifierMembershipId: string | null,
+  ): Promise<void> {
+    const { userId } = application;
     const profile = {
       documentType: identity.documentType,
       documentNumber: identity.documentNumber,
@@ -79,62 +78,16 @@ export class PrismaOnboardingRepository implements OnboardingRepository {
       await this.prisma.$transaction([
         this.prisma.onboardingApplication.update({
           where: { id: application.id },
-          data: toPersistence(application),
+          data: { ...toPersistence(application), verifiedById: verifierMembershipId, verifiedAt: new Date() },
         }),
         this.prisma.profile.upsert({
-          where: { userId: application.userId },
-          create: { userId: application.userId, ...profile },
+          where: { userId },
+          create: { userId, ...profile },
           update: profile,
         }),
-      ]);
-    });
-  }
-
-  listAwaitingReview(institutionId: string): Promise<ApplicationUnderReview[]> {
-    return runQuery(this.logger, async () => {
-      const rows = await this.prisma.onboardingApplication.findMany({
-        where: { institutionId, status: OnboardingStatus.NEEDS_REVIEW },
-        include: { user: { select: { id: true, email: true, firstName: true, lastName: true } } },
-        orderBy: { updatedAt: 'asc' },
-      });
-      return rows.map((row) => ({
-        application: toDomainApplication(row),
-        applicant: {
-          userId: row.user.id,
-          email: row.user.email,
-          firstName: row.user.firstName,
-          lastName: row.user.lastName,
-        },
-      }));
-    });
-  }
-
-  completeReview(
-    application: OnboardingApplication,
-    reviewerMembershipId: string | null,
-  ): Promise<void> {
-    const { userId, confirmed } = application;
-    return runQuery(this.logger, async () => {
-      const recordReview = this.prisma.onboardingApplication.update({
-        where: { id: application.id },
-        data: {
-          ...toPersistence(application),
-          reviewedById: reviewerMembershipId,
-          reviewedAt: new Date(),
-        },
-      });
-      if (application.status !== OnboardingStatus.APPROVED) {
-        await recordReview;
-        return;
-      }
-      await this.prisma.$transaction([
-        recordReview,
         this.prisma.user.update({
           where: { id: userId },
-          data: {
-            status: 'ACTIVE',
-            ...(confirmed ? { firstName: confirmed.firstName, lastName: confirmed.lastName } : {}),
-          },
+          data: { status: 'ACTIVE', firstName: identity.firstName, lastName: identity.lastName },
         }),
         // Identity is verified once per person, so every role they were registered for becomes usable
         this.prisma.membership.updateMany({

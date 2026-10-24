@@ -16,7 +16,7 @@ const NO_COUNTS: InstitutionCounts = {
   activeStudents: 0,
   teachers: 0,
   activeGroups: 0,
-  pendingReviews: 0,
+  awaitingIdentityCheck: 0,
   attendance: { present: 0, late: 0, absent: 0, excused: 0 },
 };
 
@@ -34,7 +34,6 @@ export class InMemoryDashboardQueries implements DashboardQueries {
     activeInstitutions: 0,
     inactiveInstitutions: 0,
     totalUsers: 0,
-    pendingReviews: 0,
     usersByStatus: { active: 0, pendingOnboarding: 0, suspended: 0 },
     largestInstitutions: [],
   };

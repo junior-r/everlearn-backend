@@ -6,8 +6,6 @@ export interface PlatformDashboard {
   activeInstitutions: number;
   inactiveInstitutions: number;
   totalUsers: number;
-  /** ID documents waiting for a decision, in every institution. */
-  pendingReviews: number;
   usersByStatus: { active: number; pendingOnboarding: number; suspended: number };
   /** The active institutions with most active members, largest first. */
   largestInstitutions: Array<{ id: string; name: string; members: number }>;
@@ -19,7 +17,8 @@ export interface InstitutionCounts {
   teachers: number;
   /** Groups of an academic period that is running today. */
   activeGroups: number;
-  pendingReviews: number;
+  /** Members registered but not active yet, because their ID has not been checked at the desk. */
+  awaitingIdentityCheck: number;
   attendance: AttendanceCounts;
 }
 
