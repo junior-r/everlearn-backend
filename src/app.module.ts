@@ -14,6 +14,7 @@ import { MessagingModule } from './modules/messaging/messaging.module.js';
 import { NotificationsModule } from './modules/notifications/notifications.module.js';
 import { OnboardingModule } from './modules/onboarding/onboarding.module.js';
 import { SchedulingModule } from './modules/scheduling/scheduling.module.js';
+import { HumanCheckModule } from './shared/infrastructure/human-check/human-check.module.js';
 import { PrismaModule } from './shared/infrastructure/prisma/prisma.module.js';
 import { RealtimeModule } from './shared/infrastructure/realtime/realtime.module.js';
 import { RedisModule } from './shared/infrastructure/redis/redis.module.js';
@@ -25,6 +26,7 @@ import { DomainExceptionFilter } from './shared/presentation/filters/domain-exce
     AppConfigModule,
     PrismaModule,
     RedisModule,
+    HumanCheckModule,
     RealtimeModule,
     NotificationsModule,
     IdentityModule,

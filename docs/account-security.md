@@ -42,3 +42,15 @@ A new member chooses their own password before anything else opens. Google sign-
   - **Fails closed.** Without Redis no token is issued or accepted.
 - **The Implementation:** `RequestPasswordResetUseCase`, `ResetPasswordUseCase` (`identity/application/use-cases/password-reset.use-cases.ts`), the `PasswordResetTokens` port with `RedisPasswordResetTokens`, the shared `EmailProvider`. A reset also ends a forced password change. `forgot-password` accepts `locale` (`es` | `en`) for the screen the link opens; the email itself is in Spanish.
 - **Known gaps:** every authenticated request now reads Redis once, and is refused while Redis is down (security checks fail closed); a session opened in the same second as the reset survives it; a realtime socket already connected stays open until it reconnects; the same one-second window applies to a change from Profile Settings.
+
+## Bot check on the public forms
+
+- **The Need:** sign-in and "forgot password" are the only forms anyone can post to without an account, so scripts can hammer them (password guessing, reset-email floods from rotating addresses).
+- **The Goal:** those two routes only accept a request from a browser that solved a Cloudflare Turnstile challenge.
+- **The Reason:**
+  - **Turnstile** is free, has no image puzzles for people, and keeps no tracking cookies; the domain already sits on Cloudflare.
+  - **A guard, not use-case code.** `@RequireHumanCheck('<action>')` with `HumanCheckGuard`, beside `@RateLimit`: the rule is about the transport, not the business. The rate limit runs first, so refused floods never reach Cloudflare.
+  - **The token is bound to its form.** The widget declares the route's action (`login`, `forgot-password`); a token solved for another form fails. Tokens are single-use, so the browser gets a fresh challenge after every failed attempt.
+  - **Fails open when Cloudflare cannot answer** (timeout, 5xx, `internal-error`): like the rate limit still guarding these routes, an outage elsewhere must not lock the school out. A missing, reused or forged token is always refused (`403 HUMAN_CHECK_FAILED`).
+- **The Implementation:** the `HumanCheck` port (`shared/domain/human-check`), `TurnstileHumanCheck` calling Siteverify (5 s timeout) and `DisabledHumanCheck`, chosen in `HumanCheckModule` from `TURNSTILE_SECRET_KEY` (unset: off, with a warning in production). The browser sends the token in `X-Human-Check`. `reset-password` needs none: its single-use emailed token already proves the request.
+- **Known gaps:** the Google sign-in redirect is not checked (Google runs its own); authenticated forms rely on the session and the rate limits.
