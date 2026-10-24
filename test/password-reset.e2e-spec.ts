@@ -100,4 +100,14 @@ describe('Password reset (HTTP)', () => {
 
     expect(refused.body.code).toBe('RATE_LIMITED');
   });
+
+  it('sends no reset email when the bot check fails', async () => {
+    ctx.humanCheck.outcome = 'failed';
+
+    const refused = await forgot(EMAIL).expect(403);
+
+    expect(refused.body.code).toBe('HUMAN_CHECK_FAILED');
+    expect(ctx.humanCheck.requests.at(-1)?.action).toBe('forgot-password');
+    expect(ctx.emails.sent).toHaveLength(0);
+  });
 });

@@ -21,6 +21,10 @@ import {
   Public,
 } from '../../../../shared/presentation/decorators/auth.decorators.js';
 import {
+  HumanCheckGuard,
+  RequireHumanCheck,
+} from '../../../../shared/presentation/guards/human-check.guard.js';
+import {
   RateLimit,
   RateLimitGuard,
 } from '../../../../shared/presentation/guards/rate-limit.guard.js';
@@ -72,8 +76,9 @@ export class AuthController {
   }
 
   @Public()
-  @UseGuards(RateLimitGuard)
+  @UseGuards(RateLimitGuard, HumanCheckGuard)
   @RateLimit({ scope: 'auth-login', bodyField: 'email' })
+  @RequireHumanCheck('login')
   @Post('login')
   @HttpCode(HttpStatus.OK)
   async login(
@@ -85,8 +90,9 @@ export class AuthController {
 
   /** Always answers the same way, whether or not the address belongs to an account. */
   @Public()
-  @UseGuards(RateLimitGuard)
+  @UseGuards(RateLimitGuard, HumanCheckGuard)
   @RateLimit({ scope: 'auth-forgot-password', bodyField: 'email' })
+  @RequireHumanCheck('forgot-password')
   @Post('forgot-password')
   @HttpCode(HttpStatus.NO_CONTENT)
   async forgotPassword(@Body() dto: ForgotPasswordDto): Promise<void> {

@@ -41,6 +41,11 @@ import type {
 } from '../../src/shared/domain/auth/authenticated-user.js';
 import type { Role } from '../../src/shared/domain/auth/role.js';
 import type {
+  HumanCheck,
+  HumanCheckOutcome,
+  HumanCheckRequest,
+} from '../../src/shared/domain/human-check/human-check.js';
+import type {
   RateLimitDecision,
   RateLimiter,
 } from '../../src/shared/domain/rate-limit/rate-limiter.js';
@@ -470,6 +475,17 @@ export class InMemoryRateLimiter implements RateLimiter {
     const count = (this.attempts.get(key) ?? 0) + 1;
     this.attempts.set(key, count);
     return Promise.resolve({ allowed: count <= limit, retryAfterSeconds: windowSeconds });
+  }
+}
+
+/** Answers every check with `outcome` (passed by default) and records what it was asked. */
+export class FakeHumanCheck implements HumanCheck {
+  readonly requests: HumanCheckRequest[] = [];
+  outcome: HumanCheckOutcome = 'passed';
+
+  verify(request: HumanCheckRequest): Promise<HumanCheckOutcome> {
+    this.requests.push(request);
+    return Promise.resolve(this.outcome);
   }
 }
 

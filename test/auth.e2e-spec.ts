@@ -167,6 +167,34 @@ describe('Auth HTTP flow', () => {
     await request(ctx.server).post('/auth/login').send(credentials).expect(200);
   });
 
+  it('asks the bot check about sign-in with the token from the X-Human-Check header', async () => {
+    await request(ctx.server)
+      .post('/auth/login')
+      .set('X-Human-Check', 'solved-token')
+      .send(credentials)
+      .expect(200);
+
+    expect(ctx.humanCheck.requests).toEqual([
+      expect.objectContaining({ token: 'solved-token', action: 'login' }),
+    ]);
+  });
+
+  it('refuses sign-in when the bot check fails, even with the right password', async () => {
+    ctx.humanCheck.outcome = 'failed';
+
+    const refused = await request(ctx.server).post('/auth/login').send(credentials);
+
+    expect(refused.status).toBe(403);
+    expect(refused.body.code).toBe('HUMAN_CHECK_FAILED');
+    expect(cookieNamed(refused, 'everlearn_refresh')).toBeUndefined();
+  });
+
+  it('still allows sign-in when the bot check provider is unavailable', async () => {
+    ctx.humanCheck.outcome = 'unavailable';
+
+    await request(ctx.server).post('/auth/login').send(credentials).expect(200);
+  });
+
   it('refuses a refresh token used as an access token', async () => {
     const response = await request(ctx.server).post('/auth/login').send(credentials);
     const refreshToken = cookieNamed(response, 'everlearn_refresh')?.split(';')[0].split('=')[1];

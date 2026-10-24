@@ -60,6 +60,7 @@ import {
   SCHEDULE_LOCK,
   SCHEDULE_REPOSITORY,
 } from '../../src/modules/scheduling/domain/ports/scheduling.ports.js';
+import { HUMAN_CHECK } from '../../src/shared/domain/human-check/human-check.js';
 import { RATE_LIMITER } from '../../src/shared/domain/rate-limit/rate-limiter.js';
 import { PrismaService } from '../../src/shared/infrastructure/prisma/prisma.service.js';
 import { REDIS_CLIENT } from '../../src/shared/infrastructure/redis/redis.tokens.js';
@@ -88,6 +89,7 @@ import {
 } from './group.fakes.js';
 import {
   FakeGoogleGateway,
+  FakeHumanCheck,
   FakePasswordHasher,
   InMemoryMemberRepository,
   InMemoryPasswordResetTokens,
@@ -231,6 +233,7 @@ export async function createTestApp(extraControllers: Type[] = [], options: Test
     revocations: new InMemoryRefreshTokenRevocations(),
     resetTokens: new InMemoryPasswordResetTokens(),
     rateLimiter: new InMemoryRateLimiter(),
+    humanCheck: new FakeHumanCheck(),
     ...onboarding,
     ...admin,
   };
@@ -257,6 +260,8 @@ export async function createTestApp(extraControllers: Type[] = [], options: Test
     .useValue({ disconnect: () => undefined })
     .overrideProvider(RATE_LIMITER)
     .useValue(fakes.rateLimiter)
+    .overrideProvider(HUMAN_CHECK)
+    .useValue(fakes.humanCheck)
     .overrideProvider(PASSWORD_HASHER)
     .useValue(new FakePasswordHasher())
     .overrideProvider(USER_REPOSITORY)

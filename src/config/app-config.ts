@@ -41,6 +41,8 @@ export interface AppConfig {
   livekit: LiveKitConfig | null;
   /** Shared with our microservices. Null refuses every call to the internal API. */
   internalServiceSecret: string | null;
+  /** Cloudflare Turnstile, the bot check of the public forms. Null lets every request through. */
+  turnstile: { secretKey: string } | null;
   ai: AiConfig;
   /** How long the platform and institution dashboards keep their figures. 0 counts them on every request. */
   analyticsCacheSeconds: number;
@@ -244,6 +246,7 @@ export function loadAppConfig(env: Env): AppConfig {
       : null,
     livekit: liveKitConfig(env),
     internalServiceSecret: env.INTERNAL_SERVICE_SECRET || null,
+    turnstile: env.TURNSTILE_SECRET_KEY?.trim() ? { secretKey: env.TURNSTILE_SECRET_KEY.trim() } : null,
     ai: aiConfig(env),
     analyticsCacheSeconds: nonNegativeInt(env, 'ANALYTICS_CACHE_SECONDS', 30),
     reminders: {
