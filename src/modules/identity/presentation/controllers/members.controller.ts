@@ -18,10 +18,10 @@ import { PageMembersDto, RegisterMemberDto, SearchMembersDto } from '../dtos/mem
 
 /**
  * Member management for the institution in the `x-institution-id` header.
- * Staff may enter, but the use case limits them to registering Students.
+ * Staff and Principals may enter, but the use case limits them to Students and Guardians.
  */
 @Controller('members')
-@Roles(Role.ADMIN, Role.STAFF)
+@Roles(Role.ADMIN, Role.STAFF, Role.COORDINATOR)
 export class MembersController {
   constructor(
     @Inject(RegisterMemberUseCase) private readonly registerMember: RegisterMemberUseCase,

@@ -262,12 +262,23 @@ export class InMemoryMemberRepository implements MemberRepository {
     );
   }
 
-  pendingEnrollment(userId: string) {
-    const member = this.members.find((candidate) => candidate.userId === userId && !candidate.isActive);
-    return member ? { institutionId: member.institutionId, requestedRole: member.role } : null;
+  /** A member of the institution as the ID desk sees them; null for another institution's membership. */
+  applicant(membershipId: string, institutionId: string) {
+    const member = this.members.find(
+      (candidate) => candidate.membershipId === membershipId && candidate.institutionId === institutionId,
+    );
+    const user = member ? this.users.users.get(member.userId) : undefined;
+    return member && user
+      ? {
+          userId: member.userId,
+          membershipId,
+          role: member.role,
+          isVerified: user.status !== UserStatus.PENDING_ONBOARDING,
+        }
+      : null;
   }
 
-  /** What approving an onboarding application does: the account and all its pending memberships go active. */
+  /** What checking someone's ID at the desk does: the account and all its pending memberships go active. */
   activate(userId: string, names?: { firstName: string; lastName: string }): void {
     this.users.patch(userId, { status: UserStatus.ACTIVE, ...names });
     for (const member of this.members.filter((candidate) => candidate.userId === userId)) {

@@ -1,14 +1,10 @@
 import { Module } from '@nestjs/common';
-import { NOTIFIER } from '../../shared/domain/notifications/notifier.js';
+import { NOTIFIER, type Notifier } from '../../shared/domain/notifications/notifier.js';
 import { useCaseProvider } from '../../shared/infrastructure/nest/use-case.provider.js';
-import { ConfirmOnboardingDataUseCase } from './application/use-cases/confirm-onboarding-data.use-case.js';
-import { GetOnboardingApplicationUseCase } from './application/use-cases/get-onboarding-application.use-case.js';
 import {
-  GetApplicationDocumentUseCase,
-  ListPendingReviewsUseCase,
-  ReviewApplicationUseCase,
-} from './application/use-cases/review.use-cases.js';
-import { SubmitIdentityDocumentUseCase } from './application/use-cases/submit-identity-document.use-case.js';
+  CaptureIdentityDocumentUseCase,
+  ConfirmIdentityUseCase,
+} from './application/use-cases/identity-check.use-cases.js';
 import {
   DOCUMENT_STORAGE,
   OCR_PROVIDER,
@@ -37,21 +33,17 @@ import { OnboardingController } from './presentation/controllers/onboarding.cont
           : new MockOcrProvider(),
       inject: [APP_CONFIG],
     },
-    useCaseProvider(GetOnboardingApplicationUseCase, [ONBOARDING_REPOSITORY]),
-    useCaseProvider(SubmitIdentityDocumentUseCase, [
+    useCaseProvider(CaptureIdentityDocumentUseCase, [
       ONBOARDING_REPOSITORY,
       DOCUMENT_STORAGE,
       OCR_PROVIDER,
     ]),
-    useCaseProvider(ListPendingReviewsUseCase, [ONBOARDING_REPOSITORY]),
-    useCaseProvider(ReviewApplicationUseCase, [ONBOARDING_REPOSITORY, NOTIFIER]),
-    useCaseProvider(GetApplicationDocumentUseCase, [ONBOARDING_REPOSITORY, DOCUMENT_STORAGE]),
     {
       // Built by hand because its last constructor argument (the clock) keeps its default
-      provide: ConfirmOnboardingDataUseCase,
-      useFactory: (applications: OnboardingRepository) =>
-        new ConfirmOnboardingDataUseCase(applications),
-      inject: [ONBOARDING_REPOSITORY],
+      provide: ConfirmIdentityUseCase,
+      useFactory: (applications: OnboardingRepository, notifier: Notifier) =>
+        new ConfirmIdentityUseCase(applications, notifier),
+      inject: [ONBOARDING_REPOSITORY, NOTIFIER],
     },
   ],
 })

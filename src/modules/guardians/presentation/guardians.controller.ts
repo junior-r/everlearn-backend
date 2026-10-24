@@ -50,15 +50,15 @@ export class GuardiansController {
     @Inject(GetWardOverviewUseCase) private readonly wardOverview: GetWardOverviewUseCase,
   ) {}
 
-  // The office that registers Students also records who answers for them
+  // The desk that enrols Students also records who answers for them
   @Get('guardian-links')
-  @Roles(Role.ADMIN, Role.STAFF)
+  @Roles(Role.ADMIN, Role.STAFF, Role.COORDINATOR)
   links(@CurrentInstitutionId() institutionId: string): Promise<GuardianLink[]> {
     return this.listLinks.execute(institutionId);
   }
 
   @Put('guardian-links')
-  @Roles(Role.ADMIN, Role.STAFF)
+  @Roles(Role.ADMIN, Role.STAFF, Role.COORDINATOR)
   link(@CurrentInstitutionId() institutionId: string, @Body() dto: LinkGuardianDto): Promise<GuardianLink> {
     return this.linkGuardian.execute({
       institutionId,
@@ -70,7 +70,7 @@ export class GuardiansController {
 
   @Delete('guardian-links/:linkId')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @Roles(Role.ADMIN, Role.STAFF)
+  @Roles(Role.ADMIN, Role.STAFF, Role.COORDINATOR)
   async unlink(
     @CurrentInstitutionId() institutionId: string,
     @Param('linkId', ParseUUIDPipe) linkId: string,

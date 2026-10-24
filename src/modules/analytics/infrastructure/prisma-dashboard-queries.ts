@@ -7,7 +7,6 @@ import type { AcademicOverview, GroupTeaching, InstitutionCounts, PlatformDashbo
 import type { AssignedCourse, DashboardQueries, GroupAttendance } from '../domain/ports/analytics.ports.js';
 
 const LARGEST_INSTITUTIONS = 5;
-const PENDING_REVIEW = 'NEEDS_REVIEW';
 
 /** An academic period that is running on `day`. */
 const running = (day: Date): Prisma.AcademicPeriodWhereInput => ({ startDate: { lte: day }, endDate: { gte: day } });
@@ -32,11 +31,10 @@ export class PrismaDashboardQueries implements DashboardQueries {
 
   platform(): Promise<PlatformDashboard> {
     return runQuery(this.logger, async () => {
-      const [activeInstitutions, inactiveInstitutions, users, pendingReviews, largest] = await Promise.all([
+      const [activeInstitutions, inactiveInstitutions, users, largest] = await Promise.all([
         this.prisma.institution.count({ where: { isActive: true } }),
         this.prisma.institution.count({ where: { isActive: false } }),
         this.prisma.user.groupBy({ by: ['status'], _count: { _all: true } }),
-        this.prisma.onboardingApplication.count({ where: { status: PENDING_REVIEW } }),
         this.prisma.institution.findMany({
           where: { isActive: true },
           select: { id: true, name: true, _count: { select: { memberships: { where: { isActive: true } } } } },
@@ -49,7 +47,6 @@ export class PrismaDashboardQueries implements DashboardQueries {
         activeInstitutions,
         inactiveInstitutions,
         totalUsers: users.reduce((total, row) => total + row._count._all, 0),
-        pendingReviews,
         usersByStatus: {
           active: withStatus('ACTIVE'),
           pendingOnboarding: withStatus('PENDING_ONBOARDING'),
@@ -62,18 +59,24 @@ export class PrismaDashboardQueries implements DashboardQueries {
 
   institution(institutionId: string, day: Date): Promise<InstitutionCounts> {
     return runQuery(this.logger, async () => {
-      const [activeStudents, teachers, activeGroups, pendingReviews, attendance] = await Promise.all([
+      const [activeStudents, teachers, activeGroups, awaitingIdentityCheck, attendance] = await Promise.all([
         this.prisma.membership.count({ where: { institutionId, role: 'STUDENT', isActive: true } }),
         this.prisma.membership.count({ where: { institutionId, role: 'TEACHER', isActive: true } }),
         this.prisma.group.count({ where: { institutionId, period: running(day) } }),
-        this.prisma.onboardingApplication.count({ where: { institutionId, status: PENDING_REVIEW } }),
+        this.prisma.membership.count({ where: { institutionId, user: { status: 'PENDING_ONBOARDING' } } }),
         this.prisma.attendanceRecord.groupBy({
           by: ['status'],
           where: { session: { course: { group: { institutionId } } } },
           _count: { _all: true },
         }),
       ]);
-      return { activeStudents, teachers, activeGroups, pendingReviews, attendance: countsByStatus(attendance) };
+      return {
+        activeStudents,
+        teachers,
+        activeGroups,
+        awaitingIdentityCheck,
+        attendance: countsByStatus(attendance),
+      };
     });
   }
 

@@ -122,18 +122,10 @@ export async function createTestApp(extraControllers: Type[] = [], options: Test
   const members = new InMemoryMemberRepository(users);
   const onboarding = createOnboardingFakes();
   // Stand in for the joins the Prisma adapter does across module tables
-  onboarding.applications.lookupEnrollment = (userId) => members.pendingEnrollment(userId);
-  onboarding.applications.lookupApplicant = (userId) => {
-    const user = users.users.get(userId);
-    return {
-      userId,
-      email: user?.email ?? '',
-      firstName: user?.firstName ?? '',
-      lastName: user?.lastName ?? '',
-    };
-  };
-  onboarding.applications.onApproved = (application) =>
-    members.activate(application.userId, application.confirmed ?? undefined);
+  onboarding.applications.lookupApplicant = (membershipId, institutionId) =>
+    members.applicant(membershipId, institutionId);
+  onboarding.applications.onVerified = (application, identity) =>
+    members.activate(application.userId, identity);
 
   const admin = createAdminFakes();
   const periods = new InMemoryPeriodRepository();

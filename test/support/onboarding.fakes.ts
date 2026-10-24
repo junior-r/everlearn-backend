@@ -11,7 +11,6 @@ import {
 } from '../../src/modules/onboarding/domain/entities/onboarding-application.entity.js';
 import type {
   Applicant,
-  ApplicationUnderReview,
   DocumentStorage,
   OcrProvider,
   OnboardingRepository,
@@ -24,10 +23,6 @@ export const PNG_BYTES = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x
 
 export const INSTITUTION_ID = '11111111-1111-4111-8111-111111111111';
 export const OTHER_INSTITUTION_ID = '22222222-2222-4222-8222-222222222222';
-export const STUDENT_ENROLLMENT: Enrollment = {
-  institutionId: INSTITUTION_ID,
-  requestedRole: Role.STUDENT,
-};
 
 export const SAMPLE_EXTRACTION: ExtractedIdentity = {
   firstName: 'María Fernanda',
@@ -50,14 +45,12 @@ function snapshot(application: OnboardingApplication): OnboardingApplicationProp
     documentKey: application.documentKey,
     extracted: application.extracted,
     confirmed: application.confirmed,
-    rejectionReason: application.rejectionReason,
   };
 }
 
-export interface RecordedReview {
+export interface RecordedCheck {
   applicationId: string;
-  status: OnboardingStatus;
-  reviewerMembershipId: string | null;
+  verifierMembershipId: string | null;
 }
 
 export class InMemoryOnboardingRepository implements OnboardingRepository {
@@ -65,18 +58,32 @@ export class InMemoryOnboardingRepository implements OnboardingRepository {
   readonly rows: OnboardingApplicationProps[] = [];
   readonly profiles = new Map<string, ConfirmedIdentity>();
   readonly savedStatuses: OnboardingStatus[] = [];
-  readonly reviews: RecordedReview[] = [];
-  readonly enrollments = new Map<string, Enrollment>();
+  readonly checks: RecordedCheck[] = [];
+  /** Membership id → the member and the institution they belong to. */
+  readonly applicants = new Map<string, Applicant & { institutionId: string }>();
   /** Hooks that let another module's fake stand in for the tables this repository reads or writes. */
-  lookupEnrollment: (userId: string) => Enrollment | null = (userId) =>
-    this.enrollments.get(userId) ?? null;
-  lookupApplicant: (userId: string) => Applicant = (userId) => ({
-    userId,
-    email: `${userId}@example.com`,
-    firstName: 'Registered',
-    lastName: 'Name',
-  });
-  onApproved: (application: OnboardingApplication) => void = () => undefined;
+  lookupApplicant: (membershipId: string, institutionId: string) => Applicant | null = (
+    membershipId,
+    institutionId,
+  ) => {
+    const applicant = this.applicants.get(membershipId);
+    return applicant?.institutionId === institutionId ? applicant : null;
+  };
+  onVerified: (application: OnboardingApplication, identity: ConfirmedIdentity) => void = () => undefined;
+
+  /** A pending member of the institution, whose ID the desk can check. */
+  addApplicant(applicant: Partial<Applicant> & { institutionId?: string } = {}): Applicant {
+    const stored = {
+      userId: randomUUID(),
+      membershipId: randomUUID(),
+      role: Role.STUDENT,
+      isVerified: false,
+      institutionId: INSTITUTION_ID,
+      ...applicant,
+    };
+    this.applicants.set(stored.membershipId, stored);
+    return stored;
+  }
 
   seed(props: Partial<OnboardingApplicationProps> & { userId: string }): OnboardingApplication {
     const row: OnboardingApplicationProps = {
@@ -88,25 +95,24 @@ export class InMemoryOnboardingRepository implements OnboardingRepository {
       documentKey: null,
       extracted: null,
       confirmed: null,
-      rejectionReason: null,
       ...props,
     };
     this.rows.push(row);
     return new OnboardingApplication({ ...row });
   }
 
-  findById(id: string): Promise<OnboardingApplication | null> {
-    const row = this.rows.find((candidate) => candidate.id === id);
-    return Promise.resolve(row ? new OnboardingApplication({ ...row }) : null);
+  findApplicant(membershipId: string, institutionId: string): Promise<Applicant | null> {
+    return Promise.resolve(this.lookupApplicant(membershipId, institutionId));
   }
 
-  findLatestByUserId(userId: string): Promise<OnboardingApplication | null> {
-    const row = this.rows.findLast((candidate) => candidate.userId === userId);
+  findOpen(userId: string, institutionId: string): Promise<OnboardingApplication | null> {
+    const row = this.rows.findLast(
+      (candidate) =>
+        candidate.userId === userId &&
+        candidate.institutionId === institutionId &&
+        candidate.status !== OnboardingStatus.APPROVED,
+    );
     return Promise.resolve(row ? new OnboardingApplication({ ...row }) : null);
-  }
-
-  findPendingEnrollment(userId: string): Promise<Enrollment | null> {
-    return Promise.resolve(this.lookupEnrollment(userId));
   }
 
   create(userId: string, enrollment: Enrollment): Promise<OnboardingApplication> {
@@ -120,41 +126,15 @@ export class InMemoryOnboardingRepository implements OnboardingRepository {
     return Promise.resolve();
   }
 
-  async submitForReview(
+  async completeCheck(
     application: OnboardingApplication,
     identity: ConfirmedIdentity,
+    verifierMembershipId: string | null,
   ): Promise<void> {
     await this.save(application);
     this.profiles.set(application.userId, identity);
-  }
-
-  listAwaitingReview(institutionId: string): Promise<ApplicationUnderReview[]> {
-    return Promise.resolve(
-      this.rows
-        .filter(
-          (row) =>
-            row.institutionId === institutionId && row.status === OnboardingStatus.NEEDS_REVIEW,
-        )
-        .map((row) => ({
-          application: new OnboardingApplication({ ...row }),
-          applicant: this.lookupApplicant(row.userId),
-        })),
-    );
-  }
-
-  async completeReview(
-    application: OnboardingApplication,
-    reviewerMembershipId: string | null,
-  ): Promise<void> {
-    await this.save(application);
-    this.reviews.push({
-      applicationId: application.id,
-      status: application.status,
-      reviewerMembershipId,
-    });
-    if (application.status === OnboardingStatus.APPROVED) {
-      this.onApproved(application);
-    }
+    this.checks.push({ applicationId: application.id, verifierMembershipId });
+    this.onVerified(application, identity);
   }
 }
 
@@ -165,10 +145,6 @@ export class InMemoryDocumentStorage implements DocumentStorage {
     const key = `onboarding/${ownerId}/${this.stored.length + 1}.${image.format}`;
     this.stored.push({ ownerId, image, key });
     return Promise.resolve(key);
-  }
-
-  read(key: string): Promise<DocumentImage | null> {
-    return Promise.resolve(this.stored.find((entry) => entry.key === key)?.image ?? null);
   }
 }
 

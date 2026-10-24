@@ -1,5 +1,6 @@
 import { createIdentityFakes } from '../../../../../test/support/identity.fakes.js';
 import type { AuthenticatedUser } from '../../../../shared/domain/auth/authenticated-user.js';
+import { registrableRoles } from '../../../../shared/domain/auth/registration.js';
 import { Role } from '../../../../shared/domain/auth/role.js';
 import { UserStatus } from '../../domain/entities/user.entity.js';
 import {
@@ -8,7 +9,6 @@ import {
   InstitutionNotFoundException,
   MemberRoleNotAllowedException,
 } from '../../domain/exceptions/identity.exceptions.js';
-import { registrableRoles } from '../../domain/member.js';
 import { EnsurePlatformAdminUseCase } from './ensure-platform-admin.use-case.js';
 import { LoginWithPasswordUseCase } from './login-with-password.use-case.js';
 import {
@@ -84,7 +84,7 @@ describe('RegisterMemberUseCase', () => {
     expect(JSON.stringify(member)).not.toContain('temp-password-1');
   });
 
-  it('lets the new member sign in with the temporary password, holding no role until approved', async () => {
+  it('lets the new member sign in with the temporary password, holding no role until their ID is checked', async () => {
     const { register, login } = setup();
     const { temporaryPassword } = await register.execute(student);
 
@@ -142,7 +142,13 @@ describe('RegisterMemberUseCase', () => {
       expect(allowedFor(staff)).toEqual([Role.GUARDIAN, Role.STUDENT]);
     });
 
-    it.each([Role.TEACHER, Role.STUDENT, Role.COORDINATOR, Role.GUARDIAN])(
+    it('lets a Principal enrol Students and Guardians at the desk, like Staff', () => {
+      const principal = { ...staff, memberships: [{ id: 'm', institutionId: INSTITUTION, role: Role.COORDINATOR }] };
+
+      expect(allowedFor(principal)).toEqual([Role.GUARDIAN, Role.STUDENT]);
+    });
+
+    it.each([Role.TEACHER, Role.STUDENT, Role.GUARDIAN])(
       'lets a %s register nobody',
       (role) => {
         const actor = { ...staff, memberships: [{ id: 'm', institutionId: INSTITUTION, role }] };
@@ -198,7 +204,7 @@ describe('RegisterMemberUseCase', () => {
     });
 
     it.each([Role.STAFF, Role.COORDINATOR])(
-      'lets an Institution Admin register %s, who must still pass onboarding',
+      'lets an Institution Admin register %s, who must still show their ID',
       async (role) => {
         const { register } = setup();
 
@@ -258,7 +264,7 @@ describe('RegisterMemberUseCase', () => {
       expect(member).toMatchObject({ status: UserStatus.ACTIVE, isActive: true });
     });
 
-    it('keeps the new role inactive for someone whose ID has not been approved yet', async () => {
+    it('keeps the new role inactive for someone whose ID has not been checked yet', async () => {
       const { register, users, members } = setup();
       const pending = users.seed({ email: 'grace@example.com', status: UserStatus.PENDING_ONBOARDING });
 

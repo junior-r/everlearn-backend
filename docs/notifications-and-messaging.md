@@ -2,7 +2,7 @@
 
 ## The Need
 
-Members must hear about what concerns them (an approved account, a new evaluation, a deadline, a class about to start, a message) without looking for it, and must be able to write to each other outside a class.
+Members must hear about what concerns them (an account made active, a new evaluation, a deadline, a class about to start, a message) without looking for it, and must be able to write to each other outside a class.
 
 ## The Goal
 
@@ -10,7 +10,7 @@ One way to tell a person something, in the app and by email; a job that sends re
 
 ## The Reason
 
-- **Any module announces through one port, `Notifier`** (`shared/domain/notifications`). It never rejects: a notice that cannot be delivered must not undo the approval or the publication it announces. Modules name a recipient by account or by membership and never touch notification tables.
+- **Any module announces through one port, `Notifier`** (`shared/domain/notifications`). It never rejects: a notice that cannot be delivered must not undo the ID check or the publication it announces. Modules name a recipient by account or by membership and never touch notification tables.
 - **A notice stores a type and facts, not a sentence.** The browser words it from its dictionaries, in the reader's language. Emails are worded here, in Spanish, because nothing knows the reader's language yet.
 - **Idempotence lives in the database, not in the job.** A reminder carries a `dedupeKey`, unique per user, so the job can run as often as wanted, on several servers at once, and after a crash, and each person still gets it once. Only notices really inserted are emailed and pushed.
 - **Notices that pile up collapse.** Messages from one sender share a `collapseKey`: while one notice is unread no other is added, and a new one appears once it was read.
@@ -37,7 +37,7 @@ One way to tell a person something, in the app and by email; a job that sends re
 
 - **Schema:** `Notification` (`userId`, `institutionId?`, `type`, `data`, `read`, `dedupeKey?`, `collapseKey?`; unique `(userId, dedupeKey)`) and `DirectMessage` (`institutionId`, `senderId`, `recipientId`, `body`, `readAt?`). Migration `notifications_and_messages`.
 - **`notifications` module (global):** `SendNotificationsUseCase` behind `NOTIFIER`; `GET /notifications` (latest 20 and the unread count), `POST /notifications/read` (`{ ids? }`, own notices only); the `EmailProvider` port (`shared/domain/email`, so identity can send too) with two adapters: `ResendEmailProvider` (official `resend` SDK; a refusal reported in its answer becomes a rejection) and `MockEmailProvider`, which logs the recipient and subject, and the body only with `EMAIL_LOG_BODIES=true`.
-- **Triggers:** `ReviewApplicationUseCase` on approval (`WELCOME`); `PublishEvaluationUseCase` on the first publication (`EVALUATION_PUBLISHED`, to the enrolled Students); `RecordGradesUseCase` for each score that is new or changed (`GRADE_POSTED`, to the Student); `SendDirectMessageUseCase` (`DIRECT_MESSAGE`).
+- **Triggers:** `ConfirmIdentityUseCase` when the desk checks an ID (`WELCOME`); `PublishEvaluationUseCase` on the first publication (`EVALUATION_PUBLISHED`, to the enrolled Students); `RecordGradesUseCase` for each score that is new or changed (`GRADE_POSTED`, to the Student); `SendDirectMessageUseCase` (`DIRECT_MESSAGE`).
 - **Guardians are told what concerns their ward:** a published evaluation (`WARD_EVALUATION_PUBLISHED`), a grade (`WARD_GRADE_POSTED`) and an `ABSENT` or `LATE` in a class (`WARD_ATTENDANCE`), whether taken automatically when the room closes (`RecordRoomLifecycleUseCase`) or by hand by the Teacher (`RecordAttendanceByHandUseCase`). Both build the notice with `absenceNotices`, keyed `attendance:<sessionId>:<enrollmentId>:<status>`: the same mark is announced once, a corrected one is news. Every ward notice carries `studentId`, so the browser can open that ward. The module that knows what happened asks with `recipient: { guardiansOf: <Student membership> }`; only `notifications` knows who the Guardians are (`NotificationRepository.guardiansOf`: active Guardian memberships of active accounts), and each gets their own notice and email.
 - **A grade is announced once per score.** Saving the gradebook again without touching a score tells nobody; a corrected score is not added while the first notice is still unread (collapse key `grade:<evaluationId>:<enrollmentId>`). Attendance already taken by hand is never announced: `saveAttendance` returns only the marks that stand as automatic.
 - **Reminders (`SendRemindersUseCase`, run by `ReminderScheduler`):** published evaluations due within 24 hours (`EVALUATION_DUE`, key `evaluation-due:<id>`), and timetable classes starting within 15 minutes (`CLASS_STARTING`, key `class-starting:<slotId>:<local date>`, to the Teacher and the enrolled Students).

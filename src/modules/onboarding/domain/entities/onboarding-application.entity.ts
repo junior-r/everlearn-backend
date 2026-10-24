@@ -1,19 +1,15 @@
 import type { Role } from '../../../../shared/domain/auth/role.js';
 import type { ConfirmedIdentity } from '../confirmed-identity.js';
 import {
-  ApplicationAlreadySubmittedException,
-  ApplicationNotAwaitingReviewException,
+  IdentityAlreadyVerifiedException,
   NothingToConfirmException,
-  RejectionReasonRequiredException,
 } from '../exceptions/onboarding.exceptions.js';
 
 export const OnboardingStatus = {
   PENDING_UPLOAD: 'PENDING_UPLOAD',
   PROCESSING: 'PROCESSING',
   PENDING_CONFIRMATION: 'PENDING_CONFIRMATION',
-  NEEDS_REVIEW: 'NEEDS_REVIEW',
   APPROVED: 'APPROVED',
-  REJECTED: 'REJECTED',
 } as const;
 export type OnboardingStatus = (typeof OnboardingStatus)[keyof typeof OnboardingStatus];
 
@@ -51,12 +47,12 @@ export interface OnboardingApplicationProps {
   documentKey: string | null;
   extracted: ExtractedIdentity | null;
   confirmed: ConfirmedIdentity | null;
-  rejectionReason: string | null;
 }
 
 /**
- * One member's identity check. Moves PENDING_UPLOAD → PROCESSING →
- * PENDING_CONFIRMATION → NEEDS_REVIEW; an Institution Admin then approves or rejects it.
+ * One member's identity check, done in person at the institution's desk. Moves
+ * PENDING_UPLOAD → PROCESSING → PENDING_CONFIRMATION → APPROVED, the last step
+ * taken by whoever saw the ID and confirmed what was read from it.
  */
 export class OnboardingApplication {
   constructor(private props: OnboardingApplicationProps) {}
@@ -88,33 +84,15 @@ export class OnboardingApplication {
   get confirmed(): ConfirmedIdentity | null {
     return this.props.confirmed;
   }
-  get rejectionReason(): string | null {
-    return this.props.rejectionReason;
-  }
-
-  isRejected(): boolean {
-    return this.props.status === OnboardingStatus.REJECTED;
-  }
 
   belongsTo(institutionId: string): boolean {
     return this.props.institutionId === institutionId;
   }
 
-  /** The enrollment a replacement application should carry over after a rejection. */
-  enrollment(): Enrollment | null {
-    const { institutionId, requestedRole } = this.props;
-    return institutionId && requestedRole ? { institutionId, requestedRole } : null;
-  }
-
-  /** Throws once the applicant has submitted; until then the photo can be retaken. */
+  /** Throws once the ID was checked; until then the photo can be retaken. */
   assertAcceptsDocument(): void {
-    const editable: OnboardingStatus[] = [
-      OnboardingStatus.PENDING_UPLOAD,
-      OnboardingStatus.PROCESSING,
-      OnboardingStatus.PENDING_CONFIRMATION,
-    ];
-    if (!editable.includes(this.props.status)) {
-      throw new ApplicationAlreadySubmittedException();
+    if (this.props.status === OnboardingStatus.APPROVED) {
+      throw new IdentityAlreadyVerifiedException();
     }
   }
 
@@ -139,39 +117,18 @@ export class OnboardingApplication {
     this.props = { ...this.props, status: OnboardingStatus.PENDING_UPLOAD, extracted: null };
   }
 
-  submitForReview(confirmed: ConfirmedIdentity): void {
+  /** Records the data confirmed against the ID in person; the member is then verified. */
+  approve(confirmed: ConfirmedIdentity): void {
     if (this.props.status !== OnboardingStatus.PENDING_CONFIRMATION) {
-      throw this.props.status === OnboardingStatus.NEEDS_REVIEW ||
-        this.props.status === OnboardingStatus.APPROVED
-        ? new ApplicationAlreadySubmittedException()
+      throw this.props.status === OnboardingStatus.APPROVED
+        ? new IdentityAlreadyVerifiedException()
         : new NothingToConfirmException();
     }
     this.props = {
       ...this.props,
-      status: OnboardingStatus.NEEDS_REVIEW,
+      status: OnboardingStatus.APPROVED,
       documentType: confirmed.documentType,
       confirmed,
     };
-  }
-
-  approve(): void {
-    this.assertAwaitingReview();
-    this.props = { ...this.props, status: OnboardingStatus.APPROVED, rejectionReason: null };
-  }
-
-  /** The reason is shown to the applicant, so they know what to fix. */
-  reject(reason: string | undefined): void {
-    this.assertAwaitingReview();
-    const trimmed = reason?.trim();
-    if (!trimmed) {
-      throw new RejectionReasonRequiredException();
-    }
-    this.props = { ...this.props, status: OnboardingStatus.REJECTED, rejectionReason: trimmed };
-  }
-
-  private assertAwaitingReview(): void {
-    if (this.props.status !== OnboardingStatus.NEEDS_REVIEW) {
-      throw new ApplicationNotAwaitingReviewException();
-    }
   }
 }

@@ -58,7 +58,6 @@ export function toDomainApplication(row: ApplicationRow): OnboardingApplication 
     documentKey: row.idFrontUrl,
     extracted: toExtracted(row),
     confirmed: toConfirmed(row),
-    rejectionReason: row.rejectionReason,
   });
 }
 
@@ -70,7 +69,6 @@ export function toPersistence(
     status: application.status,
     documentType: application.documentType,
     idFrontUrl: application.documentKey,
-    rejectionReason: application.rejectionReason,
     extractedFullName: extracted ? `${extracted.firstName} ${extracted.lastName}`.trim() : null,
     extractedDocumentNumber: extracted?.documentNumber ?? null,
     extractedBirthDate: extracted?.birthDate

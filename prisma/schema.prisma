@@ -99,9 +99,7 @@ enum OnboardingStatus {
   PENDING_UPLOAD
   PROCESSING
   PENDING_CONFIRMATION
-  NEEDS_REVIEW
   APPROVED
-  REJECTED
 }
 
 enum DocumentType {
@@ -193,7 +191,7 @@ model Membership {
   enrollments        Enrollment[]
   gradesGiven        Grade[]
   attendanceRecorded AttendanceRecord[]
-  onboardingReviews  OnboardingApplication[]
+  identityChecks     OnboardingApplication[]
   participations     SessionParticipation[]
   chatMessages       ChatMessage[]
   transcriptSegments TranscriptSegment[]
@@ -518,20 +516,18 @@ model OnboardingApplication {
   ocrProvider             String?
   processedAt             DateTime?
 
-  reviewedById    String?   @db.Uuid
-  reviewedAt      DateTime?
-  rejectionReason String?
+  // The Staff member, Principal or admin who checked the ID in person
+  verifiedById String?   @db.Uuid
+  verifiedAt   DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   institution Institution? @relation(fields: [institutionId], references: [id], onDelete: Cascade)
-  reviewedBy  Membership?  @relation(fields: [reviewedById], references: [id])
+  verifiedBy  Membership?  @relation(fields: [verifiedById], references: [id])
 
   @@index([institutionId, status])
-  // The Platform Admin's count of reviews pending in every institution
-  @@index([status])
   @@index([userId])
 }
 

@@ -55,7 +55,6 @@ describe('Dashboards (HTTP)', () => {
       activeInstitutions: 2,
       inactiveInstitutions: 1,
       totalUsers: 340,
-      pendingReviews: 6,
       usersByStatus: { active: 300, pendingOnboarding: 38, suspended: 2 },
       largestInstitutions: [{ id: institutionId, name: 'Colegio Central', members: 210 }],
     };
@@ -73,14 +72,14 @@ describe('Dashboards (HTTP)', () => {
       activeStudents: 240,
       teachers: 18,
       activeGroups: 9,
-      pendingReviews: 4,
+      awaitingIdentityCheck: 4,
       attendance: { present: 70, late: 10, absent: 20, excused: 5 },
     });
     ctx.dashboards.institutions.set(otherInstitutionId, {
       activeStudents: 999,
       teachers: 99,
       activeGroups: 99,
-      pendingReviews: 99,
+      awaitingIdentityCheck: 99,
       attendance: { present: 1, late: 0, absent: 0, excused: 0 },
     });
     const teacher = await ctx.signInAs(Role.TEACHER, institutionId, 'teacher@example.com');

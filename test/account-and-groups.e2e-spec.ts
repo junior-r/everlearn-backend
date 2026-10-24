@@ -1,7 +1,6 @@
 import request from 'supertest';
 import { Role } from '../src/shared/domain/auth/role.js';
 import { TEST_PASSWORD } from './support/identity.fakes.js';
-import { JPEG_BYTES } from './support/onboarding.fakes.js';
 import { createTestApp, TEST_FRONTEND_URL, type TestApp } from './support/test-app.js';
 
 describe('Account security, multi-institution membership and groups (HTTP)', () => {
@@ -48,16 +47,11 @@ describe('Account security, multi-institution membership and groups (HTTP)', () 
       expect(login.body.user.mustChangePassword).toBe(true);
       const restricted = as(login.body.accessToken as string);
 
-      // Onboarding, institutions and the Google link are all closed
+      // Institutions, notifications and the Google link are all closed
       // Built one at a time: supertest starts the server per request and stops it afterwards
       for (const attempt of [
-        () => restricted.get('/onboarding/application'),
-        () =>
-          restricted
-            .post('/onboarding/document')
-            .field('documentType', 'NATIONAL_ID')
-            .attach('file', Buffer.from(JPEG_BYTES), 'id.jpg'),
         () => restricted.get('/institutions'),
+        () => restricted.get('/notifications'),
         () => restricted.post('/auth/google/link'),
       ]) {
         const response = await attempt();
@@ -74,8 +68,8 @@ describe('Account security, multi-institution membership and groups (HTTP)', () 
       expect(changed.body.user.mustChangePassword).toBe(false);
 
       // The new token is unrestricted. The old one is locked, or already refused: it is revoked unless issued in this same second
-      await as(changed.body.accessToken as string).get('/onboarding/application').expect(200);
-      expect([401, 403]).toContain((await restricted.get('/onboarding/application')).status);
+      await as(changed.body.accessToken as string).get('/institutions').expect(200);
+      expect([401, 403]).toContain((await restricted.get('/institutions')).status);
       expect(String(changed.headers['set-cookie'])).toContain('HttpOnly');
 
       await request(ctx.server)

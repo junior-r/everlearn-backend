@@ -100,7 +100,7 @@ describe('an institution\'s dashboard', () => {
       activeStudents: 240,
       teachers: 18,
       activeGroups: 9,
-      pendingReviews: 4,
+      awaitingIdentityCheck: 4,
       attendance: { present: 70, late: 10, absent: 20, excused: 50 },
     });
 
@@ -110,7 +110,7 @@ describe('an institution\'s dashboard', () => {
       activeStudents: 240,
       teachers: 18,
       activeGroups: 9,
-      pendingReviews: 4,
+      awaitingIdentityCheck: 4,
       attendance: { present: 70, late: 10, absent: 20, excused: 50 },
       attendanceRate: 80,
     });
@@ -129,7 +129,7 @@ describe('an institution\'s dashboard', () => {
       activeStudents: 240,
       teachers: 18,
       activeGroups: 9,
-      pendingReviews: 0,
+      awaitingIdentityCheck: 0,
       attendance: { present: 0, late: 0, absent: 0, excused: 0 },
     });
 
