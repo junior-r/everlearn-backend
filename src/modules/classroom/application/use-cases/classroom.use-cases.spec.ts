@@ -697,10 +697,23 @@ describe('the classes of a course', () => {
       subjectName: MATH,
       groupName: '1ro A',
       sessions: [
-        { id: second, startsAt: at(20), status: SessionStatus.COMPLETED, marked: 0 },
-        { id: first, startsAt: at(0), status: SessionStatus.COMPLETED, marked: 1 },
+        { id: second, startsAt: at(20), status: SessionStatus.COMPLETED, endedAt: null, marked: 0 },
+        { id: first, startsAt: at(0), status: SessionStatus.COMPLETED, endedAt: null, marked: 1 },
       ],
     });
+  });
+
+  it('tells when a video class started, to time it, and when its room closed, to know how long it lasted', async () => {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+    await ctx.lifecycle.started(sessionId, at(2));
+
+    const access = await ctx.issue.execute(A, [ctx.grace], sessionId);
+    expect(access.startedAt).toEqual(at(2));
+
+    await ctx.lifecycle.finished(sessionId, at(47));
+    const [session] = (await ctx.sessions.execute(course(ctx, ctx.alan))).sessions;
+    expect(session).toMatchObject({ id: sessionId, startsAt: at(2), endedAt: at(47) });
   });
 
   it('is only for the Teacher assigned to the course, in its own institution', async () => {

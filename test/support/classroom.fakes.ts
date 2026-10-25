@@ -170,6 +170,7 @@ export class InMemoryClassroomRepository
           id: session.id,
           startsAt: session.actualStartedAt ?? session.startsAt,
           status: session.status,
+          endedAt: session.actualEndedAt,
           marked: marked(session.id),
         })),
     );

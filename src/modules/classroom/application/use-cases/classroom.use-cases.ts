@@ -146,6 +146,8 @@ export interface ClassroomAccess {
   role: ClassroomRole;
   subjectName: string;
   groupName: string;
+  /** When the class started, so every participant's timer counts from the same moment. */
+  startedAt: Date;
 }
 
 export class IssueClassroomTokenUseCase {
@@ -193,6 +195,7 @@ export class IssueClassroomTokenUseCase {
       role: participant.role,
       subjectName: session.subjectName,
       groupName: session.groupName,
+      startedAt: session.startsAt,
     };
   }
 }

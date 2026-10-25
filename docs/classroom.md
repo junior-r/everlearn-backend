@@ -23,7 +23,7 @@ Only the Teacher assigned to a subject and the Students enrolled in its group ge
 - **Member endpoints** (institution from `x-institution-id`):
   - `GET /classroom/courses` (Teacher, Student): the subjects the member teaches or attends, each with `openSessionId` when a class is in progress.
   - `POST /groups/:groupId/courses/:subjectId/sessions` (Teacher): opens a class, or returns the one already open. Only the assigned Teacher (`NOT_COURSE_TEACHER` otherwise).
-  - `POST /class-sessions/:sessionId/token` (Teacher, Student): `{ token, roomName, identity, role, subjectName, groupName }`. `NOT_CLASS_PARTICIPANT` (403) for anyone else, `CLASS_SESSION_NOT_FOUND` (404) for another institution's session, `CLASS_SESSION_CLOSED` (409) once it ended.
+  - `POST /class-sessions/:sessionId/token` (Teacher, Student): `{ token, roomName, identity, role, subjectName, groupName, startedAt }`; `startedAt` is when the room started (or when the Teacher opened the class, before anyone joined), so every participant's timer counts from the same moment. `NOT_CLASS_PARTICIPANT` (403) for anyone else, `CLASS_SESSION_NOT_FOUND` (404) for another institution's session, `CLASS_SESSION_CLOSED` (409) once it ended.
 - **Internal endpoints** (`/internal/classroom/sessions/:sessionId/…`, all `204`): `started`, `finished`, `participants/joined`, `participants/left`, `chat-messages`, `chat-messages/deleted`, `transcript-segments`. An unknown session or member is `404`.
 - **A chat message taken down** (`chat-messages/deleted`: `{ id, deletedById, deletedAt }`) stays stored, marked with when and by whom (`ChatMessage.deletedAt`, `deletedById`). The video-server has already checked that it was the author or the Teacher; a message that was never stored is left alone.
 - **Ending a class** is not a backend endpoint: the Teacher asks the video-server, the room closes, and the usual `finished` report closes the session and takes attendance.
@@ -38,7 +38,7 @@ Only the Teacher assigned to a subject and the Students enrolled in its group ge
 - A mark taken by hand is stored as `MANUAL` with who took it; automatic attendance never overwrites it, and it may be taken while the class is open or after it.
 - `ABSENT` and `LATE` tell the Student's Guardians exactly as the automatic ones do (see `notifications-and-messaging.md`).
 - Port `AttendanceBook` (`PrismaAttendanceBook`); use cases in `application/use-cases/attendance.use-cases.ts`.
-- **`GET /groups/:groupId/courses/:subjectId/sessions`** (same Teacher) lists the course's latest 60 classes, most recent first, each with how many Students have a mark, for the Teacher to pick the roll to take.
+- **`GET /groups/:groupId/courses/:subjectId/sessions`** (same Teacher) lists the course's latest 60 classes, most recent first, each with how many Students have a mark and `endedAt` (when its room closed; null while open and for a class recorded without video), for the Teacher to pick the roll to take and to see how long each class lasted.
 - **`POST /groups/:groupId/courses/:subjectId/sessions/held`** `{ startsAt }` records a class given without video: stored `COMPLETED` with no room, so nobody can enter it and the video-server never reports on it. A moment still to come is refused (`CLASS_NOT_HELD_YET`).
 
 ## Transcripts of past classes
