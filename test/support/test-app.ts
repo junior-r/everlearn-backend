@@ -34,6 +34,7 @@ import {
   ATTENDANCE_BOOK,
   CLASSROOM_REPOSITORY,
   SESSION_RECORDER,
+  TRANSCRIPT_ARCHIVE,
   VIDEO_TOKEN_ISSUER,
 } from '../../src/modules/classroom/domain/ports/classroom.ports.js';
 import { EVALUATION_REPOSITORY } from '../../src/modules/evaluations/domain/ports/evaluation.ports.js';
@@ -303,6 +304,8 @@ export async function createTestApp(extraControllers: Type[] = [], options: Test
     .overrideProvider(SESSION_RECORDER)
     .useValue(fakes.classroom)
     .overrideProvider(ATTENDANCE_BOOK)
+    .useValue(fakes.classroom)
+    .overrideProvider(TRANSCRIPT_ARCHIVE)
     .useValue(fakes.classroom)
     .overrideProvider(VIDEO_TOKEN_ISSUER)
     .useValue(fakes.videoTokens)

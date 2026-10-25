@@ -182,6 +182,7 @@ export class PrismaClassroomRepository implements ClassroomRepository {
         row && {
           sessionId: row.id,
           status: row.status,
+          startsAt: row.actualStartedAt ?? row.startsAt,
           groupId: row.course.group.id,
           groupName: row.course.group.name,
           subjectName: row.course.pensumSubject.subject.name,

@@ -3,6 +3,11 @@ import {
   RecordAttendanceByHandUseCase,
 } from './application/use-cases/attendance.use-cases.js';
 import { PrismaAttendanceBook } from './infrastructure/prisma-attendance-book.js';
+import { PrismaTranscriptArchive } from './infrastructure/prisma-transcript-archive.js';
+import {
+  GetClassTranscriptUseCase,
+  ListCourseTranscriptsUseCase,
+} from './application/use-cases/transcript.use-cases.js';
 import { Module } from '@nestjs/common';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import { APP_CONFIG, type AppConfig } from '../../config/app-config.js';
@@ -27,6 +32,7 @@ import {
   ATTENDANCE_BOOK,
   CLASSROOM_REPOSITORY,
   SESSION_RECORDER,
+  TRANSCRIPT_ARCHIVE,
   VIDEO_TOKEN_ISSUER,
 } from './domain/ports/classroom.ports.js';
 import { LiveKitTokenIssuer } from './infrastructure/livekit-token-issuer.js';
@@ -45,6 +51,7 @@ import { InternalClassroomController } from './presentation/internal-classroom.c
     { provide: CLASSROOM_REPOSITORY, useClass: PrismaClassroomRepository },
     { provide: SESSION_RECORDER, useClass: PrismaSessionRecorder },
     { provide: ATTENDANCE_BOOK, useClass: PrismaAttendanceBook },
+    { provide: TRANSCRIPT_ARCHIVE, useClass: PrismaTranscriptArchive },
     {
       provide: VIDEO_TOKEN_ISSUER,
       useFactory: (jwt: JwtService, config: AppConfig) => new LiveKitTokenIssuer(jwt, config.livekit),
@@ -62,6 +69,8 @@ import { InternalClassroomController } from './presentation/internal-classroom.c
     useCaseProvider(RecordChatMessageUseCase, [SESSION_RECORDER]),
     useCaseProvider(RemoveChatMessageUseCase, [SESSION_RECORDER]),
     useCaseProvider(RecordTranscriptSegmentUseCase, [SESSION_RECORDER]),
+    useCaseProvider(ListCourseTranscriptsUseCase, [CLASSROOM_REPOSITORY, TRANSCRIPT_ARCHIVE]),
+    useCaseProvider(GetClassTranscriptUseCase, [CLASSROOM_REPOSITORY, TRANSCRIPT_ARCHIVE]),
   ],
 })
 export class ClassroomModule {}

@@ -63,6 +63,8 @@ export interface CourseSessions {
 export interface SessionAccess {
   sessionId: string;
   status: SessionStatus;
+  /** When the class really started, or was planned to. */
+  startsAt: Date;
   groupId: string;
   groupName: string;
   subjectName: string;
@@ -101,6 +103,39 @@ export interface TranscriptSegment {
   language: string | null;
   startedAt: Date;
   endedAt: Date;
+}
+
+/** One transcribed stretch of a past class, as its Teacher and Students read it. */
+export interface TranscriptLine {
+  id: string;
+  /** Null when the speaker is unknown or no longer a member. */
+  speakerName: string | null;
+  text: string;
+  startedAt: Date;
+  endedAt: Date;
+}
+
+/** A class of a course that has a transcript, and how long it is. */
+export interface TranscribedSession {
+  sessionId: string;
+  startsAt: Date;
+  lines: number;
+}
+
+/** The classes of a course that have a transcript, most recent first, with what the course is. */
+export interface CourseTranscripts {
+  subjectName: string;
+  groupName: string;
+  sessions: TranscribedSession[];
+}
+
+/** What was said in one class, in order. */
+export interface ClassTranscript {
+  sessionId: string;
+  subjectName: string;
+  groupName: string;
+  startsAt: Date;
+  lines: TranscriptLine[];
 }
 
 /** What a Student's time in a class amounts to once it is over. */

@@ -13,7 +13,6 @@ import {
   roomNameFor,
   type ClassroomCourse,
   type CourseSessions,
-  type SessionAccess,
   type TeachableCourse,
 } from '../../domain/classroom.js';
 import type { AvailableLabs } from '../../../../shared/domain/labs/available-labs.js';
@@ -22,7 +21,7 @@ import type { ClassroomRepository, VideoTokenIssuer } from '../../domain/ports/c
 const MS_PER_MINUTE = 60_000;
 
 /** The memberships through which someone can give or attend classes in one institution. */
-function classroomMemberships(memberships: MembershipClaim[], institutionId: string) {
+export function classroomMemberships(memberships: MembershipClaim[], institutionId: string) {
   return memberships.flatMap((membership) =>
     membership.institutionId === institutionId &&
     (membership.role === ClassroomRole.TEACHER || membership.role === ClassroomRole.STUDENT)
@@ -50,6 +49,29 @@ export interface StartClassSessionInput {
   memberships: MembershipClaim[];
   groupId: string;
   subjectId: string;
+}
+
+/**
+ * The membership through which someone takes part in a course: the Teacher
+ * assigned to it, or a Student enrolled in its group. Null for anyone else.
+ */
+export async function participantOf(
+  classroom: ClassroomRepository,
+  course: { groupId: string; teacherMembershipId: string | null },
+  memberships: Array<{ id: string; role: ClassroomRole }>,
+): Promise<{ id: string; role: ClassroomRole } | null> {
+  const teacher = memberships.find(
+    (membership) => membership.role === ClassroomRole.TEACHER && membership.id === course.teacherMembershipId,
+  );
+  if (teacher) {
+    return teacher;
+  }
+  for (const membership of memberships) {
+    if (membership.role === ClassroomRole.STUDENT && (await classroom.isEnrolled(course.groupId, membership.id))) {
+      return membership;
+    }
+  }
+  return null;
 }
 
 /** The course of a group's subject, for the Teacher assigned to it and nobody else. */
@@ -143,7 +165,8 @@ export class IssueClassroomTokenUseCase {
     if (!session) {
       throw new ClassSessionNotFoundException();
     }
-    const participant = await this.participantIn(
+    const participant = await participantOf(
+      this.classroom,
       session,
       classroomMemberships(memberships, institutionId),
     );
@@ -171,27 +194,5 @@ export class IssueClassroomTokenUseCase {
       subjectName: session.subjectName,
       groupName: session.groupName,
     };
-  }
-
-  private async participantIn(
-    session: SessionAccess,
-    memberships: Array<{ id: string; role: ClassroomRole }>,
-  ) {
-    const teacher = memberships.find(
-      (membership) =>
-        membership.role === ClassroomRole.TEACHER && membership.id === session.teacherMembershipId,
-    );
-    if (teacher) {
-      return teacher;
-    }
-    for (const membership of memberships) {
-      if (
-        membership.role === ClassroomRole.STUDENT &&
-        (await this.classroom.isEnrolled(session.groupId, membership.id))
-      ) {
-        return membership;
-      }
-    }
-    return null;
   }
 }

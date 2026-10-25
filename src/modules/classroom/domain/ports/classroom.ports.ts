@@ -6,6 +6,8 @@ import type {
   ClassroomCourse,
   ClassroomRole,
   CourseSession,
+  TranscribedSession,
+  TranscriptLine,
   ManualAttendanceMark,
   Participation,
   RollCall,
@@ -18,6 +20,7 @@ export const CLASSROOM_REPOSITORY = Symbol('ClassroomRepository');
 export const SESSION_RECORDER = Symbol('SessionRecorder');
 export const VIDEO_TOKEN_ISSUER = Symbol('VideoTokenIssuer');
 export const ATTENDANCE_BOOK = Symbol('AttendanceBook');
+export const TRANSCRIPT_ARCHIVE = Symbol('TranscriptArchive');
 
 export interface ClassroomRepository {
   /** The courses a membership teaches, or follows through an active enrollment, inside the institution. */
@@ -86,4 +89,12 @@ export interface AttendanceBook {
   sheet(institutionId: string, sessionId: string): Promise<AttendanceSheet | null>;
   /** Stores marks as taken by hand by `recordedById`, replacing whatever stood for those Students. */
   record(sessionId: string, recordedById: string, marks: ManualAttendanceMark[]): Promise<void>;
+}
+
+/** The transcripts the video-server reported, read back once a class has been given. */
+export interface TranscriptArchive {
+  /** The latest `limit` classes of a course with at least one transcribed line, most recent first. */
+  transcribedSessions(courseId: string, limit: number): Promise<TranscribedSession[]>;
+  /** The lines of a session, in the order they were said. */
+  lines(sessionId: string): Promise<TranscriptLine[]>;
 }

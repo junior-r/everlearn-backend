@@ -260,4 +260,58 @@ describe('Virtual classroom (HTTP)', () => {
       expect(ctx.classroom.participations).toHaveLength(0);
     });
   });
+
+  describe('transcripts of past classes', () => {
+    /** Alan's class, with one line said and the room finished. */
+    async function givenClass() {
+      const seeded = await seedClass();
+      const report = (path: string) =>
+        request(ctx.server)
+          .post(`/internal/classroom/sessions/${seeded.sessionId}/${path}`)
+          .set('X-Internal-Secret', TEST_INTERNAL_SECRET);
+      await report('started').send({ startedAt: '2026-10-12T08:00:00.000Z' }).expect(204);
+      await report('transcript-segments')
+        .send({
+          id: randomUUID(),
+          speakerId: seeded.alan.membershipId,
+          text: 'Buenos días',
+          language: 'es',
+          startedAt: '2026-10-12T08:03:00.000Z',
+          endedAt: '2026-10-12T08:03:04.000Z',
+        })
+        .expect(204);
+      await report('finished').send({ endedAt: '2026-10-12T08:45:00.000Z' }).expect(204);
+      return { ...seeded, transcriptsPath: seeded.sessionsPath.replace(/sessions$/, 'transcripts') };
+    }
+
+    it('lets the Teacher and the Students of the group list and read what was said', async () => {
+      const { alan, grace, sessionId, transcriptsPath } = await givenClass();
+
+      for (const reader of [alan, grace]) {
+        const list = await as(reader.token, institutionId).get(transcriptsPath).expect(200);
+        expect(list.body).toMatchObject({
+          groupName: '1ro A',
+          sessions: [{ sessionId, startsAt: '2026-10-12T08:00:00.000Z', lines: 1 }],
+        });
+        const transcript = await as(reader.token, institutionId).get(`/class-sessions/${sessionId}/transcript`).expect(200);
+        expect(transcript.body.lines).toEqual([
+          expect.objectContaining({ speakerName: 'Alan Prueba', text: 'Buenos días', startedAt: '2026-10-12T08:03:00.000Z' }),
+        ]);
+      }
+    });
+
+    it('is not found for a Student of another group or another institution, and closed to other roles', async () => {
+      const { sessionId, transcriptsPath } = await givenClass();
+      const linus = await member(Role.STUDENT, 'Linus');
+      const outsider = await member(Role.TEACHER, 'Katherine', otherInstitutionId);
+
+      const listed = await as(linus.token, institutionId).get(transcriptsPath).expect(404);
+      expect(listed.body.code).toBe('COURSE_NOT_FOUND');
+      const read = await as(linus.token, institutionId).get(`/class-sessions/${sessionId}/transcript`).expect(404);
+      expect(read.body.code).toBe('CLASS_SESSION_NOT_FOUND');
+      await as(outsider.token, otherInstitutionId).get(`/class-sessions/${sessionId}/transcript`).expect(404);
+      await as(adminToken, institutionId).get(`/class-sessions/${sessionId}/transcript`).expect(403);
+      await request(ctx.server).get(`/class-sessions/${sessionId}/transcript`).expect(401);
+    });
+  });
 });

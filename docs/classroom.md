@@ -41,6 +41,12 @@ Only the Teacher assigned to a subject and the Students enrolled in its group ge
 - **`GET /groups/:groupId/courses/:subjectId/sessions`** (same Teacher) lists the course's latest 60 classes, most recent first, each with how many Students have a mark, for the Teacher to pick the roll to take.
 - **`POST /groups/:groupId/courses/:subjectId/sessions/held`** `{ startsAt }` records a class given without video: stored `COMPLETED` with no room, so nobody can enter it and the video-server never reports on it. A moment still to come is refused (`CLASS_NOT_HELD_YET`).
 
+## Transcripts of past classes
+
+- **`GET /groups/:groupId/courses/:subjectId/transcripts`** (`TEACHER`, `STUDENT`) lists the course's latest 60 classes that have at least one transcribed line, most recent first, with how many lines each has. **`GET /class-sessions/:sessionId/transcript`** answers `{ sessionId, subjectName, groupName, startsAt, lines: [{ id, speakerName, text, startedAt, endedAt }] }`, in the order said; `speakerName` is null when nobody was named.
+- Who reads them is the course rule: the Teacher assigned to it and the Students enrolled in its group (`participantOf`, shared with the room token). Anyone else, here or in another institution, gets "not found" (`COURSE_NOT_FOUND`, `CLASS_SESSION_NOT_FOUND`), so a transcript never reveals that a class took place.
+- Read-only, through the `TranscriptArchive` port (`PrismaTranscriptArchive`); use cases in `application/use-cases/transcript.use-cases.ts`. The download is a plain-text file the browser builds from this answer (see `frontend/docs/virtual-classroom.md`), so dates follow the reader's locale.
+
 ## Known gaps
 
 - A course's list of classes stops at the latest 60; older ones cannot be reopened from the screen.
@@ -49,5 +55,6 @@ Only the Teacher assigned to a subject and the Students enrolled in its group ge
 - Attendance measures connection time, not when the Student arrived: LATE means "attended part of the class".
 - A Teacher who stays alone in the room after the class keeps it open, which lowers every Student's share.
 - Two simultaneous "start class" requests for the same subject could open two sessions.
-- No endpoints yet to read a session's attendance, chat history or transcript; whoever adds the chat one must leave out messages with `deletedAt`.
+- No endpoint reads a past class's chat history; whoever adds it must leave out messages with `deletedAt`.
+- Transcripts are kept with no expiry and hold what Students said as text; there is no retention policy yet, nor a way for a Guardian to read them.
 - `speakingSeconds`, `cameraOnSeconds` and `screenShareSeconds` are not filled.

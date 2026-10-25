@@ -15,12 +15,15 @@ import {
   type RollCall,
   type SessionAccess,
   type TeachableCourse,
+  type TranscribedSession,
+  type TranscriptLine,
   type TranscriptSegment,
 } from '../../src/modules/classroom/domain/classroom.js';
 import type {
   AttendanceBook,
   ClassroomRepository,
   SessionRecorder,
+  TranscriptArchive,
   VideoGrant,
   VideoTokenIssuer,
 } from '../../src/modules/classroom/domain/ports/classroom.ports.js';
@@ -50,7 +53,9 @@ const isOpen = (session: StoredSession) =>
  * Sessions and what was recorded about them. Courses, teachers and
  * enrollments are read from the academics fakes, as the real one reads their tables.
  */
-export class InMemoryClassroomRepository implements ClassroomRepository, SessionRecorder, AttendanceBook {
+export class InMemoryClassroomRepository
+  implements ClassroomRepository, SessionRecorder, AttendanceBook, TranscriptArchive
+{
   readonly sessions: StoredSession[] = [];
   readonly participations: StoredParticipation[] = [];
   /** Automatic attendance by "sessionId:membershipId"; a Student's membership id stands in for the enrollment. */
@@ -180,6 +185,7 @@ export class InMemoryClassroomRepository implements ClassroomRepository, Session
         ? {
             sessionId: session.id,
             status: session.status,
+            startsAt: session.actualStartedAt ?? session.startsAt,
             groupId: group.id,
             groupName: group.name,
             subjectName: '',
@@ -197,6 +203,36 @@ export class InMemoryClassroomRepository implements ClassroomRepository, Session
   displayName(membershipId: string): Promise<string> {
     const person = this.directory.describe(membershipId);
     return Promise.resolve(`${person.firstName} ${person.lastName}`.trim());
+  }
+
+  transcribedSessions(courseId: string, limit: number): Promise<TranscribedSession[]> {
+    const sessions = this.sessions
+      .filter((session) => courseKey(session.groupId, session.subjectId) === courseId)
+      .map((session) => ({
+        sessionId: session.id,
+        startsAt: session.actualStartedAt ?? session.startsAt,
+        lines: this.transcriptSegments.filter((segment) => segment.sessionId === session.id).length,
+      }))
+      .filter((session) => session.lines > 0)
+      .sort((a, b) => b.startsAt.getTime() - a.startsAt.getTime());
+    return Promise.resolve(sessions.slice(0, limit));
+  }
+
+  lines(sessionId: string): Promise<TranscriptLine[]> {
+    const lines = this.transcriptSegments
+      .filter((segment) => segment.sessionId === sessionId)
+      .sort((a, b) => a.startedAt.getTime() - b.startedAt.getTime())
+      .map((segment) => {
+        const speaker = segment.speakerId ? this.directory.describe(segment.speakerId) : null;
+        return {
+          id: segment.id,
+          speakerName: speaker ? `${speaker.firstName} ${speaker.lastName}`.trim() : null,
+          text: segment.text,
+          startedAt: segment.startedAt,
+          endedAt: segment.endedAt,
+        };
+      });
+    return Promise.resolve(lines);
   }
 
   private requireSession(sessionId: string): StoredSession {
