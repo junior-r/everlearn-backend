@@ -48,6 +48,8 @@ export interface CourseSession {
   id: string;
   startsAt: Date;
   status: SessionStatus;
+  /** When its room closed; null while it is open, and for a class recorded without video. */
+  endedAt: Date | null;
   /** Students who already have a mark for this class. */
   marked: number;
 }

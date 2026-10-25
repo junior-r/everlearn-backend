@@ -152,6 +152,7 @@ export class PrismaClassroomRepository implements ClassroomRepository {
           id: true,
           startsAt: true,
           actualStartedAt: true,
+          actualEndedAt: true,
           status: true,
           _count: { select: { attendance: true } },
         },
@@ -160,6 +161,7 @@ export class PrismaClassroomRepository implements ClassroomRepository {
         id: row.id,
         startsAt: row.actualStartedAt ?? row.startsAt,
         status: row.status,
+        endedAt: row.actualEndedAt,
         marked: row._count.attendance,
       }));
     });
