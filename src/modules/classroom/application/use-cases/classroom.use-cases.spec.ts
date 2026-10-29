@@ -100,7 +100,7 @@ function setup() {
     list: new ListMyCoursesUseCase(classroom),
     sessions: new ListCourseSessionsUseCase(classroom),
     held: new RecordHeldClassUseCase(classroom),
-    issue: new IssueClassroomTokenUseCase(classroom, tokens, labs),
+    issue: new IssueClassroomTokenUseCase(classroom, tokens, labs, true),
     lifecycle: new RecordRoomLifecycleUseCase(classroom, notifier),
     sheet: new GetSessionAttendanceUseCase(classroom),
     byHand: new RecordAttendanceByHandUseCase(classroom, notifier),
@@ -199,6 +199,7 @@ describe('entering a class', () => {
       identity: ctx.alan.id,
       role: 'TEACHER',
       groupName: '1ro A',
+      canRecord: true,
     });
     expect(ctx.tokens.grants).toEqual([
       {
@@ -207,6 +208,7 @@ describe('entering a class', () => {
         displayName: 'Alan Prueba',
         canModerate: true,
         shareableLabs: ['gravity', 'completions'],
+        canRecord: true,
       },
     ]);
   });
@@ -217,8 +219,28 @@ describe('entering a class', () => {
 
     const access = await ctx.issue.execute(A, [ctx.grace], sessionId);
 
-    expect(access).toMatchObject({ identity: ctx.grace.id, role: 'STUDENT' });
-    expect(ctx.tokens.grants[0]).toMatchObject({ identity: ctx.grace.id, canModerate: false, shareableLabs: [] });
+    expect(access).toMatchObject({ identity: ctx.grace.id, role: 'STUDENT', canRecord: false });
+    expect(ctx.tokens.grants[0]).toMatchObject({
+      identity: ctx.grace.id,
+      canModerate: false,
+      shareableLabs: [],
+      canRecord: false,
+    });
+  });
+
+  it('lets no one record where recordings are off, the Teacher included', async () => {
+    const ctx = setup();
+    const sessionId = await ctx.open();
+    const labs = { keysFor: () => Promise.resolve([]) };
+
+    const access = await new IssueClassroomTokenUseCase(ctx.classroom, ctx.tokens, labs, false).execute(
+      A,
+      [ctx.alan],
+      sessionId,
+    );
+
+    expect(access.canRecord).toBe(false);
+    expect(ctx.tokens.grants[0]?.canRecord).toBe(false);
   });
 
   it('picks the membership that takes part when the person holds several', async () => {
@@ -521,6 +543,7 @@ describe('LiveKit access tokens', () => {
     displayName: 'Alan Prueba',
     canModerate: true,
     shareableLabs: ['gravity', 'function-grapher'],
+    canRecord: true,
   };
 
   it('signs a token LiveKit accepts: issued by the API key, for one room and one identity', async () => {
@@ -541,7 +564,7 @@ describe('LiveKit access tokens', () => {
         canSubscribe: true,
         canPublishData: false,
       },
-      attributes: { role: 'TEACHER', labs: 'gravity,function-grapher' },
+      attributes: { role: 'TEACHER', labs: 'gravity,function-grapher', record: 'true' },
     });
     // Moderation goes through the video-server: no browser holds LiveKit's room administration
     expect(claims.video).not.toHaveProperty('roomAdmin');
@@ -549,10 +572,15 @@ describe('LiveKit access tokens', () => {
   });
 
   it('signs a Student in as a Student, who moderates nothing', async () => {
-    const token = await new LiveKitTokenIssuer(jwt, config).issue({ ...grant, canModerate: false, shareableLabs: [] });
+    const token = await new LiveKitTokenIssuer(jwt, config).issue({
+      ...grant,
+      canModerate: false,
+      shareableLabs: [],
+      canRecord: false,
+    });
 
     const claims = jwt.decode<{ video: object; attributes: { role: string } }>(token);
-    expect(claims.attributes).toEqual({ role: 'STUDENT', labs: '' });
+    expect(claims.attributes).toEqual({ role: 'STUDENT', labs: '', record: '' });
     expect(claims.video).not.toHaveProperty('roomAdmin');
   });
 

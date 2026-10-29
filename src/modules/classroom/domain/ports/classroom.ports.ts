@@ -76,6 +76,8 @@ export interface VideoGrant {
   canModerate: boolean;
   /** The labs this participant may share with the room; empty for anyone but the Teacher. */
   shareableLabs: string[];
+  /** True for the Teacher when this deployment records classes: the video-server lets only them start one. */
+  canRecord: boolean;
 }
 
 export interface VideoTokenIssuer {

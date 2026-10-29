@@ -14,6 +14,8 @@ export const NotificationType = {
   WARD_ATTENDANCE: 'WARD_ATTENDANCE',
   /** To a Student: their Teacher gave the group a lab activity. */
   LAB_ASSIGNED: 'LAB_ASSIGNED',
+  /** To the Teacher and the Students of a course: a recorded class can be watched. */
+  RECORDING_READY: 'RECORDING_READY',
 } as const;
 export type NotificationType = (typeof NotificationType)[keyof typeof NotificationType];
 

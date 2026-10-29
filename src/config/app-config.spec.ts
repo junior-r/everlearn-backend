@@ -70,3 +70,34 @@ describe('reverse proxies', () => {
     expect(() => proxies({ TRUSTED_PROXIES: 'all' })).toThrow('TRUSTED_PROXIES must be a whole number, 0 or more');
   });
 });
+
+describe('recordings', () => {
+  const recordings = (env: Record<string, string>) => loadAppConfig({ ...BASE, ...env }).recordings;
+
+  it('are off and kept on local disk by default', () => {
+    expect(recordings({})).toMatchObject({ enabled: false, storage: { kind: 'local' }, publicApiUrl: 'http://localhost:4000' });
+  });
+
+  it('go to an S3-compatible bucket, such as R2, when one is configured', () => {
+    expect(
+      recordings({
+        RECORDINGS_ENABLED: 'true',
+        RECORDINGS_STORAGE: 'S3',
+        RECORDINGS_S3_ENDPOINT: 'https://account.r2.cloudflarestorage.com',
+        RECORDINGS_S3_BUCKET: 'classes',
+        RECORDINGS_S3_ACCESS_KEY_ID: 'id',
+        RECORDINGS_S3_SECRET_ACCESS_KEY: 'secret',
+      }),
+    ).toMatchObject({
+      enabled: true,
+      storage: { kind: 's3', endpoint: 'https://account.r2.cloudflarestorage.com', region: 'auto', bucket: 'classes' },
+    });
+  });
+
+  it('refuse a bucket without its credentials, and an unknown storage', () => {
+    expect(() => recordings({ RECORDINGS_STORAGE: 's3', RECORDINGS_S3_BUCKET: 'classes' })).toThrow(
+      'RECORDINGS_S3_ACCESS_KEY_ID',
+    );
+    expect(() => recordings({ RECORDINGS_STORAGE: 'ftp' })).toThrow('RECORDINGS_STORAGE');
+  });
+});

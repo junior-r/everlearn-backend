@@ -42,11 +42,39 @@ import {
 } from './infrastructure/prisma-classroom.repositories.js';
 import { ClassroomController } from './presentation/classroom.controller.js';
 import { InternalClassroomController } from './presentation/internal-classroom.controller.js';
+import { RecordingsController } from './presentation/recordings.controller.js';
+import {
+  ArchiveNextRecordingUseCase,
+  GetRecordingLinkUseCase,
+  ListCourseRecordingsUseCase,
+  RecordFinishedRecordingUseCase,
+} from './application/use-cases/recording.use-cases.js';
+import {
+  RECORDING_MEDIA_FILES,
+  RECORDING_REPOSITORY,
+  RECORDING_SPOOL,
+  RECORDING_STORAGE,
+  RECORDINGS_ENABLED,
+  type RecordingStorage,
+} from './domain/ports/recording.ports.js';
+import { PrismaRecordingRepository } from './infrastructure/prisma-recording.repository.js';
+import { LocalDiskRecordingStorage } from './infrastructure/recordings/local-disk-recording-storage.js';
+import { LocalRecordingSpool } from './infrastructure/recordings/local-recording-spool.js';
+import { RecordingArchiveWorker } from './infrastructure/recordings/recording-archive.worker.js';
+import { S3RecordingStorage } from './infrastructure/recordings/s3-recording-storage.js';
 
-/** Composition root of the virtual classroom: who may enter a class, and what the video-server reports about it. */
+/** Where recordings are kept: an S3-compatible bucket when one is configured, this server's disk otherwise. */
+function recordingStorage(config: AppConfig): RecordingStorage {
+  const { storage, publicApiUrl } = config.recordings;
+  return storage.kind === 's3'
+    ? new S3RecordingStorage(storage)
+    : new LocalDiskRecordingStorage(config.uploadsDir, publicApiUrl, config.jwt.accessSecret);
+}
+
+/** Composition root of the virtual classroom: who may enter a class, what the video-server reports about it, and its recordings. */
 @Module({
   imports: [JwtModule.register({})],
-  controllers: [ClassroomController, InternalClassroomController],
+  controllers: [ClassroomController, InternalClassroomController, RecordingsController],
   providers: [
     { provide: CLASSROOM_REPOSITORY, useClass: PrismaClassroomRepository },
     { provide: SESSION_RECORDER, useClass: PrismaSessionRecorder },
@@ -57,8 +85,32 @@ import { InternalClassroomController } from './presentation/internal-classroom.c
       useFactory: (jwt: JwtService, config: AppConfig) => new LiveKitTokenIssuer(jwt, config.livekit),
       inject: [JwtService, APP_CONFIG],
     },
+    { provide: RECORDING_REPOSITORY, useClass: PrismaRecordingRepository },
+    {
+      provide: RECORDING_SPOOL,
+      useFactory: (config: AppConfig) => new LocalRecordingSpool(config.recordings.spoolDir),
+      inject: [APP_CONFIG],
+    },
+    { provide: RECORDING_STORAGE, useFactory: recordingStorage, inject: [APP_CONFIG] },
+    {
+      provide: RECORDING_MEDIA_FILES,
+      // Only the local storage serves files through this API; a bucket serves its own links
+      useFactory: (storage: RecordingStorage) => (storage instanceof LocalDiskRecordingStorage ? storage : null),
+      inject: [RECORDING_STORAGE],
+    },
+    {
+      provide: RECORDINGS_ENABLED,
+      useFactory: (config: AppConfig) => config.recordings.enabled,
+      inject: [APP_CONFIG],
+    },
+    RecordingArchiveWorker,
     useCaseProvider(ListMyCoursesUseCase, [CLASSROOM_REPOSITORY]),
-    useCaseProvider(IssueClassroomTokenUseCase, [CLASSROOM_REPOSITORY, VIDEO_TOKEN_ISSUER, AVAILABLE_LABS]),
+    useCaseProvider(IssueClassroomTokenUseCase, [
+      CLASSROOM_REPOSITORY,
+      VIDEO_TOKEN_ISSUER,
+      AVAILABLE_LABS,
+      RECORDINGS_ENABLED,
+    ]),
     useCaseProvider(StartClassSessionUseCase, [CLASSROOM_REPOSITORY]),
     useCaseProvider(ListCourseSessionsUseCase, [CLASSROOM_REPOSITORY]),
     useCaseProvider(RecordHeldClassUseCase, [CLASSROOM_REPOSITORY]),
@@ -71,6 +123,10 @@ import { InternalClassroomController } from './presentation/internal-classroom.c
     useCaseProvider(RecordTranscriptSegmentUseCase, [SESSION_RECORDER]),
     useCaseProvider(ListCourseTranscriptsUseCase, [CLASSROOM_REPOSITORY, TRANSCRIPT_ARCHIVE]),
     useCaseProvider(GetClassTranscriptUseCase, [CLASSROOM_REPOSITORY, TRANSCRIPT_ARCHIVE]),
+    useCaseProvider(RecordFinishedRecordingUseCase, [RECORDING_REPOSITORY]),
+    useCaseProvider(ArchiveNextRecordingUseCase, [RECORDING_REPOSITORY, RECORDING_SPOOL, RECORDING_STORAGE, NOTIFIER]),
+    useCaseProvider(ListCourseRecordingsUseCase, [CLASSROOM_REPOSITORY, RECORDING_REPOSITORY]),
+    useCaseProvider(GetRecordingLinkUseCase, [CLASSROOM_REPOSITORY, RECORDING_REPOSITORY, RECORDING_STORAGE]),
   ],
 })
 export class ClassroomModule {}

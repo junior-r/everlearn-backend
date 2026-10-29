@@ -7,11 +7,13 @@ import {
   RecordTranscriptSegmentUseCase,
   RemoveChatMessageUseCase,
 } from '../application/use-cases/session-recording.use-cases.js';
+import { RecordFinishedRecordingUseCase } from '../application/use-cases/recording.use-cases.js';
 import {
   ChatMessageDeletedDto,
   ChatMessageDto,
   ParticipantJoinedDto,
   ParticipantLeftDto,
+  RecordingFinishedDto,
   RoomFinishedDto,
   RoomStartedDto,
   TranscriptSegmentDto,
@@ -27,6 +29,7 @@ export class InternalClassroomController {
     @Inject(RecordChatMessageUseCase) private readonly chat: RecordChatMessageUseCase,
     @Inject(RemoveChatMessageUseCase) private readonly chatRemoval: RemoveChatMessageUseCase,
     @Inject(RecordTranscriptSegmentUseCase) private readonly transcript: RecordTranscriptSegmentUseCase,
+    @Inject(RecordFinishedRecordingUseCase) private readonly recording: RecordFinishedRecordingUseCase,
   ) {}
 
   @Post('started')
@@ -121,6 +124,23 @@ export class InternalClassroomController {
       language: dto.language ?? null,
       startedAt: dto.startedAt,
       endedAt: dto.endedAt,
+    });
+  }
+
+  /** Egress finished a recording; it waits in the spool until the archiver stores it. */
+  @Post('recordings')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  recordingFinished(
+    @Param('sessionId', ParseUUIDPipe) sessionId: string,
+    @Body() dto: RecordingFinishedDto,
+  ): Promise<void> {
+    return this.recording.execute({
+      egressId: dto.egressId,
+      sessionId,
+      spoolFile: dto.file,
+      startedAt: dto.startedAt,
+      endedAt: dto.endedAt,
+      sizeBytes: dto.sizeBytes,
     });
   }
 }
