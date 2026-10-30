@@ -8,8 +8,11 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsInt,
   IsUUID,
+  Matches,
   MaxLength,
+  Min,
   ValidateNested,
 } from 'class-validator';
 import {
@@ -133,4 +136,35 @@ export class RecordAttendanceDto {
   @ValidateNested({ each: true })
   @Type(() => AttendanceMarkDto)
   marks: AttendanceMarkDto[];
+}
+
+export class RecordingFinishedDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(64)
+  egressId: string;
+
+  // `<session id>/<file id>.mp4`; the use case checks it names this session
+  @IsString()
+  @MaxLength(100)
+  @Matches(/^[0-9a-f-]+\/[0-9a-f-]+\.mp4$/)
+  file: string;
+
+  @Type(() => Date)
+  @IsDate()
+  startedAt: Date;
+
+  @Type(() => Date)
+  @IsDate()
+  endedAt: Date;
+
+  @IsInt()
+  @Min(1)
+  sizeBytes: number;
+}
+
+export class RecordingLinkQueryDto {
+  @IsOptional()
+  @IsIn(['true', 'false'])
+  download?: 'true' | 'false';
 }

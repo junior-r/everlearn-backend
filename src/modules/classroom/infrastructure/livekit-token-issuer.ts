@@ -33,6 +33,7 @@ export class LiveKitTokenIssuer implements VideoTokenIssuer {
       role: grant.canModerate ? ClassroomRole.TEACHER : ClassroomRole.STUDENT,
       // LiveKit attributes are strings: the keys are joined with commas
       labs: grant.shareableLabs.join(','),
+      record: grant.canRecord ? 'true' : '',
     };
     return this.jwt.signAsync(
       { name: grant.displayName, video, attributes },

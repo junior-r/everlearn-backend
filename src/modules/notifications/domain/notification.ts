@@ -109,6 +109,12 @@ export function emailFor(type: NotificationType, data: NotificationData, firstNa
         `Tu docente te asignó la actividad «${text(data, 'title')}» en ${text(data, 'subjectName')} (grupo ${text(data, 'groupName')}).`,
         text(data, 'dueAt') ? `Fecha de entrega: ${utc(text(data, 'dueAt'))}.` : 'No tiene fecha de entrega.',
       );
+    case NotificationType.RECORDING_READY:
+      return compose(
+        `Ya puedes ver la grabación de ${text(data, 'subjectName')}`,
+        `La clase de ${text(data, 'subjectName')} del grupo ${text(data, 'groupName')} (${utc(text(data, 'startsAt'))}) quedó grabada.`,
+        'Entra a la plataforma para verla o descargarla.',
+      );
     case NotificationType.DIRECT_MESSAGE:
       return compose(
         `Nuevo mensaje de ${text(data, 'senderName')}`,

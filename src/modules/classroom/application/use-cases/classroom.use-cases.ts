@@ -148,6 +148,8 @@ export interface ClassroomAccess {
   groupName: string;
   /** When the class started, so every participant's timer counts from the same moment. */
   startedAt: Date;
+  /** Whether this participant may record the class: its Teacher, where recordings are on. */
+  canRecord: boolean;
 }
 
 export class IssueClassroomTokenUseCase {
@@ -155,6 +157,7 @@ export class IssueClassroomTokenUseCase {
     private readonly classroom: ClassroomRepository,
     private readonly tokens: VideoTokenIssuer,
     private readonly labs: AvailableLabs,
+    private readonly recordingsEnabled: boolean,
   ) {}
 
   /** Lets the assigned Teacher and the group's enrolled Students, and nobody else, into an open class. */
@@ -180,6 +183,7 @@ export class IssueClassroomTokenUseCase {
     }
     const roomName = roomNameFor(session.sessionId);
     const canModerate = participant.role === ClassroomRole.TEACHER;
+    const canRecord = canModerate && this.recordingsEnabled;
     const token = await this.tokens.issue({
       roomName,
       identity: participant.id,
@@ -187,6 +191,7 @@ export class IssueClassroomTokenUseCase {
       canModerate,
       // Only the Teacher shares labs with the class, and only those the institution may use
       shareableLabs: canModerate ? await this.labs.keysFor(institutionId) : [],
+      canRecord,
     });
     return {
       token,
@@ -196,6 +201,7 @@ export class IssueClassroomTokenUseCase {
       subjectName: session.subjectName,
       groupName: session.groupName,
       startedAt: session.startsAt,
+      canRecord,
     };
   }
 }

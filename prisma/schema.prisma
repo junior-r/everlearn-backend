@@ -435,6 +435,7 @@ model ClassSession {
   participations     SessionParticipation[]
   chatMessages       ChatMessage[]
   transcriptSegments TranscriptSegment[]
+  recordings         ClassRecording[]
 
   @@index([courseId, startsAt])
 }
@@ -491,6 +492,39 @@ model TranscriptSegment {
   speaker Membership?  @relation(fields: [speakerId], references: [id])
 
   @@index([sessionId, startedAt])
+}
+
+enum RecordingStatus {
+  // Egress finished the file; it waits in the spool to be stored
+  PENDING
+  READY
+  // Could not be stored after every attempt
+  FAILED
+}
+
+// A class filmed by Egress: every camera, screen and voice in one file
+model ClassRecording {
+  id            String          @id @default(uuid(7)) @db.Uuid
+  sessionId     String          @db.Uuid
+  // LiveKit Egress id; makes a redelivered report harmless
+  egressId      String          @unique
+  status        RecordingStatus @default(PENDING)
+  // The file Egress left, relative to the spool
+  spoolFile     String
+  // Where the recording storage keeps it, once READY
+  storageKey    String?
+  startedAt     DateTime
+  endedAt       DateTime
+  sizeBytes     BigInt
+  attempts      Int             @default(0)
+  // When an archiver took it; an old claim was abandoned and may be taken again
+  claimedAt     DateTime?
+  createdAt     DateTime        @default(now())
+
+  session ClassSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([status, claimedAt])
 }
 
 // ───────────── Onboarding / OCR ─────────────
@@ -599,6 +633,7 @@ enum NotificationType {
   WARD_GRADE_POSTED
   WARD_ATTENDANCE
   LAB_ASSIGNED
+  RECORDING_READY
 }
 
 model Notification {

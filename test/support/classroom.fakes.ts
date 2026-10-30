@@ -27,6 +27,19 @@ import type {
   VideoGrant,
   VideoTokenIssuer,
 } from '../../src/modules/classroom/domain/ports/classroom.ports.js';
+import type {
+  RecordingContent,
+  RecordingRepository,
+  RecordingSpool,
+  RecordingStorage,
+} from '../../src/modules/classroom/domain/ports/recording.ports.js';
+import {
+  SpoolFileMissingException,
+  type ClaimedRecording,
+  type ClassRecordingSummary,
+  type FinishedRecording,
+  type StoredRecording,
+} from '../../src/modules/classroom/domain/recording.js';
 import type { InMemoryGroupRepository, InMemoryMemberDirectory } from './group.fakes.js';
 
 interface StoredSession {
@@ -397,5 +410,152 @@ export class FakeVideoTokenIssuer implements VideoTokenIssuer {
   issue(grant: VideoGrant): Promise<string> {
     this.grants.push(grant);
     return Promise.resolve(`token-for-${grant.identity}`);
+  }
+}
+
+interface StoredRecordingRow extends FinishedRecording {
+  id: string;
+  status: 'PENDING' | 'READY' | 'FAILED';
+  storageKey: string | null;
+  attempts: number;
+  claimedAt: Date | null;
+}
+
+/** Recordings of the sessions an InMemoryClassroomRepository holds. */
+export class InMemoryRecordingRepository implements RecordingRepository {
+  readonly rows: StoredRecordingRow[] = [];
+
+  constructor(
+    private readonly classroom: InMemoryClassroomRepository,
+    private readonly groups: InMemoryGroupRepository,
+  ) {}
+
+  private session(sessionId: string) {
+    const session = this.classroom.sessions.find((candidate) => candidate.id === sessionId);
+    if (!session) {
+      throw new ClassSessionNotFoundException();
+    }
+    return session;
+  }
+
+  async register(recording: FinishedRecording): Promise<void> {
+    this.session(recording.sessionId);
+    if (!this.rows.some((row) => row.egressId === recording.egressId)) {
+      this.rows.push({ ...recording, id: randomUUID(), status: 'PENDING', storageKey: null, attempts: 0, claimedAt: null });
+    }
+  }
+
+  async claimNext(now: Date, abandonedBefore: Date): Promise<ClaimedRecording | null> {
+    const row = this.rows.find(
+      (candidate) =>
+        candidate.status === 'PENDING' &&
+        (candidate.claimedAt === null || candidate.claimedAt.getTime() < abandonedBefore.getTime()),
+    );
+    if (!row) {
+      return null;
+    }
+    row.claimedAt = now;
+    row.attempts += 1;
+    const session = this.session(row.sessionId);
+    const group = this.groups.rows.find((candidate) => candidate.id === session.groupId);
+    const teacherId = group?.teachers.get(session.subjectId);
+    return {
+      id: row.id,
+      sessionId: row.sessionId,
+      spoolFile: row.spoolFile,
+      sizeBytes: row.sizeBytes,
+      attempts: row.attempts,
+      institutionId: group?.institutionId ?? '',
+      groupId: session.groupId,
+      subjectId: session.subjectId,
+      subjectName: session.subjectId,
+      groupName: group?.name ?? '',
+      startsAt: session.actualStartedAt ?? session.startsAt,
+      audience: [...(teacherId ? [teacherId] : []), ...(group?.studentIds ?? [])],
+    };
+  }
+
+  private row(id: string): StoredRecordingRow {
+    const row = this.rows.find((candidate) => candidate.id === id);
+    if (!row) {
+      throw new Error(`No recording ${id}`);
+    }
+    return row;
+  }
+
+  async markReady(id: string, storageKey: string): Promise<void> {
+    Object.assign(this.row(id), { status: 'READY', storageKey, claimedAt: null });
+  }
+
+  async markFailed(id: string): Promise<void> {
+    Object.assign(this.row(id), { status: 'FAILED', claimedAt: null });
+  }
+
+  async listReady(courseId: string, limit: number): Promise<ClassRecordingSummary[]> {
+    return this.rows
+      .filter((row) => row.status === 'READY')
+      .map((row) => ({ row, session: this.session(row.sessionId) }))
+      .filter(({ session }) => courseKey(session.groupId, session.subjectId) === courseId)
+      .sort((a, b) => b.row.startedAt.getTime() - a.row.startedAt.getTime())
+      .slice(0, limit)
+      .map(({ row, session }) => ({
+        id: row.id,
+        sessionId: row.sessionId,
+        startsAt: session.actualStartedAt ?? session.startsAt,
+        startedAt: row.startedAt,
+        endedAt: row.endedAt,
+        sizeBytes: row.sizeBytes,
+      }));
+  }
+
+  async findReady(recordingId: string): Promise<StoredRecording | null> {
+    const row = this.rows.find((candidate) => candidate.id === recordingId && candidate.status === 'READY');
+    return row?.storageKey
+      ? { id: row.id, sessionId: row.sessionId, storageKey: row.storageKey, startedAt: row.startedAt }
+      : null;
+  }
+}
+
+/** A spool of named files in memory. */
+export class InMemoryRecordingSpool implements RecordingSpool {
+  readonly files = new Map<string, Uint8Array>();
+
+  async read(spoolFile: string): Promise<RecordingContent> {
+    const content = this.files.get(spoolFile);
+    if (!content) {
+      throw new SpoolFileMissingException();
+    }
+    return {
+      sizeBytes: content.byteLength,
+      chunks: (async function* () {
+        yield content;
+      })(),
+    };
+  }
+
+  async remove(spoolFile: string): Promise<void> {
+    this.files.delete(spoolFile);
+  }
+}
+
+/** A recording storage in memory, whose links name the key; `failing` makes every save reject. */
+export class InMemoryRecordingStorage implements RecordingStorage {
+  readonly files = new Map<string, Uint8Array>();
+  failing = false;
+
+  async save(key: string, content: RecordingContent): Promise<void> {
+    if (this.failing) {
+      throw new Error('storage unreachable');
+    }
+    const parts: Uint8Array[] = [];
+    for await (const chunk of content.chunks) {
+      parts.push(chunk);
+    }
+    this.files.set(key, Buffer.concat(parts));
+  }
+
+  link(key: string, options: { fileName: string; download: boolean; expiresInSeconds: number }): Promise<string> {
+    const query = new URLSearchParams({ name: options.fileName, download: String(options.download) });
+    return Promise.resolve(`https://storage.test/${key}?${query}`);
   }
 }

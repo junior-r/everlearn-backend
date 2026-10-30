@@ -49,6 +49,31 @@ export interface AppConfig {
   reminders: RemindersConfig;
   messaging: MessagingConfig;
   email: EmailConfig;
+  recordings: RecordingsConfig;
+}
+
+/** Any S3-compatible bucket: Cloudflare R2, AWS S3, MinIO. */
+export interface S3StorageConfig {
+  kind: 's3';
+  /** Null for AWS S3 itself; R2 and MinIO give their own address. */
+  endpoint: string | null;
+  region: string;
+  bucket: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+}
+
+export interface RecordingsConfig {
+  /** Whether Teachers may record their classes. Needs Egress running beside LiveKit. */
+  enabled: boolean;
+  /** Where Egress leaves finished recordings until they are stored. */
+  spoolDir: string;
+  /** `local` keeps them under the uploads directory and serves them through this API. */
+  storage: { kind: 'local' } | S3StorageConfig;
+  /** Where browsers reach this API, for the links of recordings kept on local disk. */
+  publicApiUrl: string;
+  /** Whether this server moves finished recordings into storage. Off by default in tests. */
+  archiveEnabled: boolean;
 }
 
 export interface EmailConfig {
@@ -216,13 +241,45 @@ function aiConfig(env: Env): AiConfig {
   };
 }
 
+function recordingStorage(env: Env): RecordingsConfig['storage'] {
+  const kind = (env.RECORDINGS_STORAGE ?? '').trim().toLowerCase() || 'local';
+  if (kind === 'local') {
+    return { kind };
+  }
+  if (kind !== 's3') {
+    throw new Error('RECORDINGS_STORAGE must be local or s3');
+  }
+  return {
+    kind,
+    endpoint: env.RECORDINGS_S3_ENDPOINT?.trim() || null,
+    region: env.RECORDINGS_S3_REGION?.trim() || 'auto',
+    bucket: required(env, 'RECORDINGS_S3_BUCKET'),
+    accessKeyId: required(env, 'RECORDINGS_S3_ACCESS_KEY_ID'),
+    secretAccessKey: required(env, 'RECORDINGS_S3_SECRET_ACCESS_KEY'),
+  };
+}
+
+function recordingsConfig(env: Env, port: number): RecordingsConfig {
+  return {
+    enabled: flag(env, 'RECORDINGS_ENABLED'),
+    spoolDir: env.RECORDINGS_SPOOL_DIR?.trim() || './recordings-spool',
+    storage: recordingStorage(env),
+    publicApiUrl: (env.PUBLIC_API_URL?.trim() || `http://localhost:${port}`).replace(/\/+$/, ''),
+    archiveEnabled:
+      (env.RECORDINGS_ARCHIVE_ENABLED ?? '').trim() === ''
+        ? env.NODE_ENV !== 'test'
+        : flag(env, 'RECORDINGS_ARCHIVE_ENABLED'),
+  };
+}
+
 /**
  * Builds the typed configuration from the environment and fails fast on
  * missing or weak values. Google OAuth is optional and null when unset.
  */
 export function loadAppConfig(env: Env): AppConfig {
+  const port = positiveInt(env, 'PORT', 4000);
   return {
-    port: positiveInt(env, 'PORT', 4000),
+    port,
     isProduction: env.NODE_ENV === 'production',
     databaseUrl: required(env, 'DATABASE_URL'),
     redisUrl: env.REDIS_URL ?? 'redis://localhost:6379',
@@ -258,5 +315,6 @@ export function loadAppConfig(env: Env): AppConfig {
       maxMessages: positiveInt(env, 'MESSAGES_MAX_PER_WINDOW', 30),
       windowSeconds: positiveInt(env, 'MESSAGES_WINDOW_SECONDS', 60),
     },
+    recordings: recordingsConfig(env, port),
   };
 }

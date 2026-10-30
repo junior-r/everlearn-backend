@@ -1,4 +1,7 @@
+import { mkdtemp, rm } from 'node:fs/promises';
 import type { Server } from 'node:http';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import type { INestApplication, Type } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import cookieParser from 'cookie-parser';
@@ -68,7 +71,18 @@ import { REDIS_CLIENT } from '../../src/shared/infrastructure/redis/redis.tokens
 import { createAdminFakes } from './admin.fakes.js';
 import { InMemoryTeachingRecords } from './ai.fakes.js';
 import { InMemoryDashboardCache, InMemoryDashboardQueries } from './analytics.fakes.js';
-import { FakeVideoTokenIssuer, InMemoryClassroomRepository } from './classroom.fakes.js';
+import {
+  FakeVideoTokenIssuer,
+  InMemoryClassroomRepository,
+  InMemoryRecordingRepository,
+  InMemoryRecordingSpool,
+} from './classroom.fakes.js';
+import {
+  RECORDING_REPOSITORY,
+  RECORDING_SPOOL,
+  RECORDING_STORAGE,
+} from '../../src/modules/classroom/domain/ports/recording.ports.js';
+import { LocalDiskRecordingStorage } from '../../src/modules/classroom/infrastructure/recordings/local-disk-recording-storage.js';
 import {
   InMemoryMessageRepository,
   InMemoryNotificationRepository,
@@ -108,6 +122,8 @@ import {
 } from './scheduling.fakes.js';
 
 export const TEST_FRONTEND_URL = 'http://frontend.test';
+/** Where the links of recordings kept on local disk point; tests request the path on the test server. */
+export const TEST_PUBLIC_API_URL = 'http://api.test';
 export const TEST_RATE_LIMIT = 5;
 export const TEST_INTERNAL_SECRET = 'internal-secret-for-tests';
 
@@ -209,6 +225,9 @@ export async function createTestApp(extraControllers: Type[] = [], options: Test
       .filter((link) => link.institutionId === institutionId)
       .map((link) => ({ guardianUserId: userOf(link.guardianId), studentUserId: userOf(link.studentId) }));
 
+  const classroom = new InMemoryClassroomRepository(groups, directory);
+  // Recordings are kept on a real disk, so the media route serves real files with byte ranges
+  const recordingsDir = await mkdtemp(path.join(tmpdir(), 'everlearn-recordings-'));
   const fakes = {
     users,
     members,
@@ -217,7 +236,10 @@ export async function createTestApp(extraControllers: Type[] = [], options: Test
     availability: new InMemoryAvailabilityRepository(),
     schedule: new InMemoryScheduleRepository(groups, directory),
     scheduleLock: new InMemoryScheduleLock(),
-    classroom: new InMemoryClassroomRepository(groups, directory),
+    classroom,
+    recordings: new InMemoryRecordingRepository(classroom, groups),
+    recordingSpool: new InMemoryRecordingSpool(),
+    recordingStorage: new LocalDiskRecordingStorage(recordingsDir, TEST_PUBLIC_API_URL, 'a'.repeat(32)),
     videoTokens: new FakeVideoTokenIssuer(),
     evaluations: new InMemoryEvaluationRepository(groups, directory),
     labAccess: new InMemoryLabAccessRepository(),
@@ -253,6 +275,7 @@ export async function createTestApp(extraControllers: Type[] = [], options: Test
         INTERNAL_SERVICE_SECRET: TEST_INTERNAL_SECRET,
         // The job is run by hand in the tests that are about it
         REMINDERS_ENABLED: 'false',
+        RECORDINGS_ENABLED: 'true',
       }),
     )
     .overrideProvider(PrismaService)
@@ -309,6 +332,12 @@ export async function createTestApp(extraControllers: Type[] = [], options: Test
     .useValue(fakes.classroom)
     .overrideProvider(VIDEO_TOKEN_ISSUER)
     .useValue(fakes.videoTokens)
+    .overrideProvider(RECORDING_REPOSITORY)
+    .useValue(fakes.recordings)
+    .overrideProvider(RECORDING_SPOOL)
+    .useValue(fakes.recordingSpool)
+    .overrideProvider(RECORDING_STORAGE)
+    .useValue(fakes.recordingStorage)
     .overrideProvider(EVALUATION_REPOSITORY)
     .useValue(fakes.evaluations)
     .overrideProvider(LAB_ACCESS_REPOSITORY)
@@ -395,6 +424,7 @@ export async function createTestApp(extraControllers: Type[] = [], options: Test
   async function close(): Promise<void> {
     httpServer.closeAllConnections();
     await app.close();
+    await rm(recordingsDir, { recursive: true, force: true });
   }
 
   return {

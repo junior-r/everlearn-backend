@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
+import { ArchiveNextRecordingUseCase } from '../src/modules/classroom/application/use-cases/recording.use-cases.js';
 import { Role } from '../src/shared/domain/auth/role.js';
-import { createTestApp, TEST_INTERNAL_SECRET, type TestApp } from './support/test-app.js';
+import { createTestApp, TEST_INTERNAL_SECRET, TEST_PUBLIC_API_URL, type TestApp } from './support/test-app.js';
 
 const TEMPORARY_PASSWORD = 'temporary-password';
 
@@ -312,6 +313,125 @@ describe('Virtual classroom (HTTP)', () => {
       await as(outsider.token, otherInstitutionId).get(`/class-sessions/${sessionId}/transcript`).expect(404);
       await as(adminToken, institutionId).get(`/class-sessions/${sessionId}/transcript`).expect(403);
       await request(ctx.server).get(`/class-sessions/${sessionId}/transcript`).expect(401);
+    });
+  });
+
+  describe('recordings of past classes', () => {
+    const CLASS = Buffer.from('0123456789'.repeat(100));
+
+    /** Alan's class, recorded by Egress into a file the spool holds, and stored. */
+    async function givenRecordedClass() {
+      const seeded = await seedClass();
+      const file = `${seeded.sessionId}/${randomUUID()}.mp4`;
+      ctx.recordingSpool.files.set(file, CLASS);
+      const report = {
+        egressId: 'EG_recorded',
+        file,
+        startedAt: '2026-10-12T08:01:00.000Z',
+        endedAt: '2026-10-12T08:44:00.000Z',
+        sizeBytes: CLASS.length,
+      };
+      const internal = () =>
+        request(ctx.server)
+          .post(`/internal/classroom/sessions/${seeded.sessionId}/recordings`)
+          .set('X-Internal-Secret', TEST_INTERNAL_SECRET);
+      await internal().send(report).expect(204);
+      // Delivered twice by the outbox: still one recording
+      await internal().send(report).expect(204);
+      expect(await ctx.app.get(ArchiveNextRecordingUseCase).execute()).toBe('STORED');
+      return { ...seeded, report, recordingsPath: seeded.sessionsPath.replace(/sessions$/, 'recordings') };
+    }
+
+    it('lets only the Teacher of the class record it', async () => {
+      const { alan, grace, sessionId } = await seedClass();
+
+      const teacher = await as(alan.token, institutionId).post(`/class-sessions/${sessionId}/token`).expect(200);
+      const student = await as(grace.token, institutionId).post(`/class-sessions/${sessionId}/token`).expect(200);
+
+      expect(teacher.body.canRecord).toBe(true);
+      expect(student.body.canRecord).toBe(false);
+      expect(ctx.videoTokens.grants.map((grant) => grant.canRecord)).toEqual([true, false]);
+    });
+
+    it('stores a finished recording once, and lists it for the Teacher and the Students of the group', async () => {
+      const { alan, grace, sessionId, recordingsPath } = await givenRecordedClass();
+
+      expect(ctx.recordings.rows).toHaveLength(1);
+      expect(ctx.recordingSpool.files.size).toBe(0);
+      for (const viewer of [alan, grace]) {
+        const list = await as(viewer.token, institutionId).get(recordingsPath).expect(200);
+        expect(list.body).toMatchObject({
+          groupName: '1ro A',
+          recordings: [
+            {
+              sessionId,
+              startedAt: '2026-10-12T08:01:00.000Z',
+              endedAt: '2026-10-12T08:44:00.000Z',
+              sizeBytes: CLASS.length,
+            },
+          ],
+        });
+      }
+      const notices = ctx.notifications.rows.filter((notice) => notice.type === 'RECORDING_READY');
+      expect(notices).toHaveLength(2);
+    });
+
+    it('plays the file through a signed link that serves byte ranges, and downloads it when asked', async () => {
+      const { grace, recordingsPath } = await givenRecordedClass();
+      const [recording] = (await as(grace.token, institutionId).get(recordingsPath).expect(200)).body.recordings;
+      const linkOf = async (query: string) => {
+        const link = await as(grace.token, institutionId).get(`/class-recordings/${recording.id}/link${query}`).expect(200);
+        expect(link.body.url.startsWith(`${TEST_PUBLIC_API_URL}/recordings/media/`)).toBe(true);
+        return (link.body.url as string).slice(TEST_PUBLIC_API_URL.length);
+      };
+
+      const play = await linkOf('');
+      const whole = await request(ctx.server).get(play).expect(200);
+      expect(whole.headers['content-type']).toBe('video/mp4');
+      expect(whole.headers['content-disposition']).toMatch(/^inline; filename=".*1ro-A-2026-10-12\.mp4"$/);
+      expect(Buffer.from(whole.body as Buffer).equals(CLASS)).toBe(true);
+      const part = await request(ctx.server).get(play).set('Range', 'bytes=10-19').expect(206);
+      expect(part.headers['content-range']).toBe(`bytes 10-19/${CLASS.length}`);
+
+      const save = await request(ctx.server).get(await linkOf('?download=true')).expect(200);
+      expect(save.headers['content-disposition']).toMatch(/^attachment; /);
+      await request(ctx.server).get(`${play}x`).expect(404);
+    });
+
+    it('is not found for a Student of another group or another institution, and closed to other roles', async () => {
+      const { recordingsPath } = await givenRecordedClass();
+      const [recording] = ctx.recordings.rows;
+      const linus = await member(Role.STUDENT, 'Linus');
+      const outsider = await member(Role.TEACHER, 'Katherine', otherInstitutionId);
+
+      const listed = await as(linus.token, institutionId).get(recordingsPath).expect(404);
+      expect(listed.body.code).toBe('COURSE_NOT_FOUND');
+      const link = await as(linus.token, institutionId).get(`/class-recordings/${recording.id}/link`).expect(404);
+      expect(link.body.code).toBe('RECORDING_NOT_FOUND');
+      await as(outsider.token, otherInstitutionId).get(`/class-recordings/${recording.id}/link`).expect(404);
+      await as(adminToken, institutionId).get(`/class-recordings/${recording.id}/link`).expect(403);
+      await request(ctx.server).get(`/class-recordings/${recording.id}/link`).expect(401);
+    });
+
+    it('refuses a report of a file the video-server did not name for that session', async () => {
+      const { sessionId } = await seedClass();
+
+      const refused = await request(ctx.server)
+        .post(`/internal/classroom/sessions/${sessionId}/recordings`)
+        .set('X-Internal-Secret', TEST_INTERNAL_SECRET)
+        .send({
+          egressId: 'EG_other',
+          file: `${randomUUID()}/${randomUUID()}.mp4`,
+          startedAt: '2026-10-12T08:01:00.000Z',
+          endedAt: '2026-10-12T08:44:00.000Z',
+          sizeBytes: 10,
+        })
+        .expect(400);
+      expect(refused.body.code).toBe('INVALID_SESSION_EVENT');
+      await request(ctx.server)
+        .post(`/internal/classroom/sessions/${sessionId}/recordings`)
+        .send({})
+        .expect(401);
     });
   });
 });
